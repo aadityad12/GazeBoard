@@ -85,6 +85,8 @@ class GazeBoardViewModel : ViewModel() {
 
             // Camera always starts — pipeline runs; frames are skipped if model not loaded
             cameraManager = CameraManager(context, eyeGazeModel, gazeEstimator, this@GazeBoardViewModel)
+            // Apply surface provider that the composable may have already set before we were ready
+            pendingSurfaceProvider?.let { cameraManager.preview.setSurfaceProvider(it) }
             cameraManager.start(lifecycleOwner)
             Log.i(TAG, "Camera pipeline started")
         }
@@ -156,7 +158,11 @@ class GazeBoardViewModel : ViewModel() {
         Log.i(TAG, "Calibration complete — entering tracking mode")
     }
 
+    // Composable calls this immediately; camera may not be ready yet — store and apply later.
+    private var pendingSurfaceProvider: Preview.SurfaceProvider? = null
+
     fun setPreviewSurface(provider: Preview.SurfaceProvider) {
+        pendingSurfaceProvider = provider
         if (::cameraManager.isInitialized) cameraManager.preview.setSurfaceProvider(provider)
     }
 
