@@ -1,15 +1,12 @@
 package com.gazeboard.ml
 
 import android.graphics.Bitmap
-import android.graphics.PointF
 import android.util.Log
 
 /**
  * Orchestrates the two-stage gaze estimation pipeline:
- *   Stage 1: EyeDetector  — finds eye region in camera frame (Android FaceDetector, CPU)
+ *   Stage 1: EyeDetector  — finds eye region in camera frame (ML Kit, CPU)
  *   Stage 2: EyeGazeModel — estimates gaze pitch/yaw from eye crop (CompiledModel, NPU)
- *
- * PERSON B OWNS THIS FILE.
  *
  * Output is a smoothed (pitch, yaw) pair in radians, ready for CalibrationEngine.
  * Both pitch and yaw are in the model's native coordinate system:
@@ -22,14 +19,13 @@ import android.util.Log
  */
 class GazeEstimator {
 
-    // EMA smoothing — higher alpha = more responsive, lower = smoother
-    // Tunable at Hour 8: try 0.2 (smooth) or 0.4 (responsive) if 0.3 isn't right
+    // EMA smoothing — α=0.3 balances responsiveness vs jitter
     private val alpha = 0.3f
     private var smoothedPitch = 0f
     private var smoothedYaw   = 0f
     private var hasFirstSample = false
 
-    private val eyeDetector  = EyeDetector()
+    private val eyeDetector = EyeDetector()
 
     companion object {
         private const val TAG = "GazeBoard"
@@ -38,34 +34,30 @@ class GazeEstimator {
     /**
      * Run the full two-stage pipeline on one camera frame.
      *
-     * @param bitmap    Full ARGB_8888 camera frame from CameraX (e.g. 640×480)
+     * @param bitmap       Full ARGB_8888 camera frame from CameraX (e.g. 640×480, already rotated)
      * @param eyeGazeModel Loaded EyeGazeModel instance (must have load() called)
      *
-     * @return [GazeResult] with smoothed pitch/yaw, or null if no face was detected.
+     * @return [GazeResult] with smoothed pitch/yaw and eye center, or null if no face detected.
      */
     fun estimate(bitmap: Bitmap, eyeGazeModel: EyeGazeModel): GazeResult? {
-        // Stage 1: Detect eye region and preprocess to 96×160 grayscale FloatBuffer
-        val eyeBuffer = eyeDetector.detectAndCrop(bitmap) ?: run {
+        val detectResult = eyeDetector.detectAndCrop(bitmap) ?: run {
             Log.d(TAG, "GazeEstimator: no face detected in frame")
             return null
         }
 
-        // Stage 2: NPU inference → pitch, yaw
-        val angles = eyeGazeModel.runInference(eyeBuffer) ?: return null
+        val angles = eyeGazeModel.runInference(detectResult.buffer) ?: return null
 
-        // EMA smoothing
         val smoothed = smooth(angles.pitch, angles.yaw)
 
         return GazeResult(
-            pitch = smoothed.first,
-            yaw   = smoothed.second
+            pitch          = smoothed.first,
+            yaw            = smoothed.second,
+            eyeCenterNormX = detectResult.eyeCenterNormX,
+            eyeCenterNormY = detectResult.eyeCenterNormY,
+            faceDetectMs   = detectResult.detectMs
         )
     }
 
-    /**
-     * Exponential moving average applied separately to pitch and yaw.
-     * On the very first sample, initialize the filter to the raw value (no lag).
-     */
     private fun smooth(rawPitch: Float, rawYaw: Float): Pair<Float, Float> {
         if (!hasFirstSample) {
             smoothedPitch = rawPitch
@@ -85,14 +77,22 @@ class GazeEstimator {
         eyeDetector.reset()
     }
 
+    fun close() {
+        eyeDetector.close()
+    }
+
     /**
-     * Output contract to ViewModel / CalibrationEngine.
+     * Output contract for ViewModel and CalibrationEngine.
      *
-     * pitch, yaw in radians (model's native output — not yet mapped to screen).
-     * CalibrationEngine maps (pitch, yaw) → screen pixel coordinates.
+     * pitch/yaw are smoothed radians from the NPU model (not yet mapped to screen).
+     * eyeCenterNorm{X,Y} are normalized [0,1] coordinates for the PiP overlay.
+     * faceDetectMs is ML Kit detection latency for the pipeline stats display.
      */
     data class GazeResult(
         val pitch: Float,
-        val yaw: Float
+        val yaw: Float,
+        val eyeCenterNormX: Float = 0f,
+        val eyeCenterNormY: Float = 0f,
+        val faceDetectMs: Long = 0L
     )
 }

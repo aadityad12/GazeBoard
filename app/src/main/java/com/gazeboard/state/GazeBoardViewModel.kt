@@ -3,6 +3,7 @@ package com.gazeboard.state
 import android.app.Application
 import android.os.SystemClock
 import android.util.Log
+import androidx.camera.core.Preview
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewModelScope
@@ -41,6 +42,26 @@ class GazeBoardViewModel(application: Application) : AndroidViewModel(applicatio
     private val _acceleratorName = MutableStateFlow("—")
     val acceleratorName: StateFlow<String> = _acceleratorName.asStateFlow()
 
+    // Reactive calibration target index — fixes non-reactive direct property read bug
+    private val _calibTargetIndex = MutableStateFlow(0)
+    val calibTargetIndex: StateFlow<Int> = _calibTargetIndex.asStateFlow()
+
+    // Face detection state for overlay and "no face" warning
+    private val _faceDetected = MutableStateFlow(false)
+    val faceDetected: StateFlow<Boolean> = _faceDetected.asStateFlow()
+
+    // Normalized eye center [0,1] for camera PiP overlay dot
+    private val _eyeCenterNorm = MutableStateFlow<Pair<Float, Float>?>(null)
+    val eyeCenterNorm: StateFlow<Pair<Float, Float>?> = _eyeCenterNorm.asStateFlow()
+
+    // ML Kit face detection latency for pipeline stats display
+    private val _faceDetectMs = MutableStateFlow(0L)
+    val faceDetectMs: StateFlow<Long> = _faceDetectMs.asStateFlow()
+
+    // Exposed to composables so PreviewView can call setSurfaceProvider().
+    // Created here (not in CameraManager) so it's always available before camera starts.
+    val cameraPreview: Preview = Preview.Builder().build()
+
     val eyeGazeModel = EyeGazeModel(application)
     val gazeEstimator = GazeEstimator()
     val calibEngine = CalibrationEngine()
@@ -58,6 +79,13 @@ class GazeBoardViewModel(application: Application) : AndroidViewModel(applicatio
     private var calibDwellStartMs = 0L
     private var screenW = 1080f
     private var screenH = 2400f
+
+    private val calibrationPrompts = listOf(
+        "Look at the top left corner",
+        "Look at the top right corner",
+        "Look at the bottom left corner",
+        "Look at the bottom right corner"
+    )
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -80,16 +108,33 @@ class GazeBoardViewModel(application: Application) : AndroidViewModel(applicatio
         calibEngine.setScreenSize(w, h)
     }
 
+    /**
+     * Called once after camera permission is granted. Creates CameraManager if not yet created.
+     * Always restarts calibration so the user calibrates on every fresh camera start.
+     */
     fun onCameraPermissionGranted(lifecycleOwner: LifecycleOwner) {
-        if (cameraManager != null) return
-
         startCalibration()
-        cameraManager = CameraManager(
-            getApplication(),
-            eyeGazeModel,
-            gazeEstimator,
-            this
-        ).also { it.start(lifecycleOwner) }
+        if (cameraManager == null) {
+            cameraManager = CameraManager(
+                getApplication(),
+                cameraPreview,
+                eyeGazeModel,
+                gazeEstimator,
+                this
+            ).also { it.start(lifecycleOwner) }
+        }
+    }
+
+    /**
+     * Called from MainActivity.onResume(). Forces recalibration every time the app
+     * comes to foreground so gaze accuracy is always fresh.
+     * CameraX lifecycle handles camera resume automatically — no explicit rebind needed.
+     */
+    fun onActivityResumed(lifecycleOwner: LifecycleOwner) {
+        when (_appState.value) {
+            AppState.Board, AppState.Calibrating -> startCalibration()
+            else -> Unit  // Initializing / NeedsPermission / Error — don't interrupt
+        }
     }
 
     fun startCalibration() {
@@ -106,9 +151,17 @@ class GazeBoardViewModel(application: Application) : AndroidViewModel(applicatio
                 CalibrationEngine.CalibPoint(screenW - margin, screenH - margin)
             )
         )
+        _calibTargetIndex.value = 0
         _appState.value = AppState.Calibrating
         _gazePoint.value = null
+        _eyeCenterNorm.value = null
         resetDwell()
+
+        // Brief delay so the calibration screen renders before TTS fires
+        viewModelScope.launch {
+            delay(400L)
+            ttsManager.speak(calibrationPrompts[0])
+        }
     }
 
     fun onGazeUpdate(
@@ -118,12 +171,17 @@ class GazeBoardViewModel(application: Application) : AndroidViewModel(applicatio
     ) {
         _inferenceMs.value = inferenceMs
         _acceleratorName.value = accelerator
+        _faceDetected.value = gazeResult != null
 
         if (gazeResult == null) {
             _gazePoint.value = null
+            _eyeCenterNorm.value = null
             resetDwell()
             return
         }
+
+        _eyeCenterNorm.value = Pair(gazeResult.eyeCenterNormX, gazeResult.eyeCenterNormY)
+        _faceDetectMs.value = gazeResult.faceDetectMs
 
         when (_appState.value) {
             AppState.Calibrating -> handleCalibrationFrame(gazeResult)
@@ -145,9 +203,20 @@ class GazeBoardViewModel(application: Application) : AndroidViewModel(applicatio
         if (elapsed >= calibrationDwellMs) {
             calibDwellStartMs = 0L
             _dwellProgress.value = 0f
+
             val done = calibEngine.commitCurrentTarget()
+            _calibTargetIndex.value = calibEngine.currentTargetIndex
+
             if (done) {
                 _appState.value = AppState.Board
+                viewModelScope.launch {
+                    ttsManager.speak("Calibration complete")
+                }
+            } else {
+                // Speak the next corner prompt
+                calibrationPrompts.getOrNull(calibEngine.currentTargetIndex)?.let { prompt ->
+                    viewModelScope.launch { ttsManager.speak(prompt) }
+                }
             }
         }
     }
@@ -198,6 +267,7 @@ class GazeBoardViewModel(application: Application) : AndroidViewModel(applicatio
     override fun onCleared() {
         cameraManager?.stop()
         eyeGazeModel.close()
+        gazeEstimator.close()
         ttsManager.shutdown()
         super.onCleared()
     }

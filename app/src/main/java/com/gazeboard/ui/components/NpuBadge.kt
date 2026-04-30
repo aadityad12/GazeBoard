@@ -29,10 +29,10 @@ fun NpuBadge(
     modifier: Modifier = Modifier
 ) {
     val backgroundColor = when (accelerator) {
-        "NPU"  -> Color(0xFF00C853)  // green — confirmed NPU execution
-        "GPU"  -> Color(0xFFFFD600)  // yellow — GPU fallback
-        "CPU"  -> Color(0xFFFF1744)  // red — CPU fallback (should not happen in demo)
-        else   -> Color(0xFF757575)  // grey — not yet initialized
+        "NPU", "NPU+GPU" -> Color(0xFF00C853)  // green — confirmed Hexagon NPU execution
+        "GPU"            -> Color(0xFFFFD600)  // yellow — GPU fallback
+        "CPU"            -> Color(0xFFFF1744)  // red — CPU fallback (should not happen in demo)
+        else             -> Color(0xFF757575)  // grey — not yet initialized
     }
 
     val textColor = when (accelerator) {

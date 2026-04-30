@@ -11,50 +11,37 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 /**
  * Full-screen Canvas overlay drawing the gaze cursor at the current gaze position.
  *
- * The cursor is a white ring with a semi-transparent fill so it's visible against any phrase cell.
+ * Accepts screen pixel coordinates directly from CalibrationEngine.toScreenPoint().
  * Disappears when gazePoint is null (no face detected).
- *
- * PERSON C OWNS THIS FILE.
- *
- * TODO(Person C): The gazePoint is currently in normalized [0,1] coordinates.
- * Convert to screen pixels by multiplying by the Canvas size.
- * This conversion happens inside the Canvas drawWithContent lambda where size is available.
  */
 @Composable
 fun GazeCursor(
-    gazePoint: Offset?,   // normalized [0,1] coordinates; null = no face
+    gazePoint: Pair<Float, Float>?,
     modifier: Modifier = Modifier
 ) {
     if (gazePoint == null) return
 
     Canvas(modifier = modifier.fillMaxSize()) {
-        // Convert normalized gaze coordinates to screen pixels
-        val screenX = gazePoint.x * size.width
-        val screenY = gazePoint.y * size.height
-
+        val (x, y) = gazePoint
+        val center = Offset(x, y)
         val cursorRadius = 24f
         val strokeWidth = 3f
 
-        // Semi-transparent white fill
         drawCircle(
             color = Color.White.copy(alpha = 0.25f),
             radius = cursorRadius,
-            center = Offset(screenX, screenY)
+            center = center
         )
-
-        // Solid white ring
         drawCircle(
             color = Color.White,
             radius = cursorRadius,
-            center = Offset(screenX, screenY),
+            center = center,
             style = Stroke(width = strokeWidth)
         )
-
-        // Small center dot for precision
         drawCircle(
             color = Color.White,
             radius = 4f,
-            center = Offset(screenX, screenY)
+            center = center
         )
     }
 }

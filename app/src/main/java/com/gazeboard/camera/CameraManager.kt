@@ -22,19 +22,19 @@ import java.util.concurrent.Executors
 /**
  * Manages the CameraX ImageAnalysis pipeline.
  *
- * PERSON B OWNS THIS FILE.
- *
  * Frame pipeline:
  *   ImageProxy (ARGB_8888) → toBitmap() → GazeEstimator.estimate()
- *     → EyeDetector [Android FaceDetector, CPU] → eye crop FloatBuffer
+ *     → EyeDetector [ML Kit, CPU] → eye crop FloatBuffer
  *     → EyeGazeModel [CompiledModel, NPU] → pitch, yaw
  *   → GazeBoardViewModel.onGazeUpdate()
  *
+ * The [preview] use case is created in GazeBoardViewModel and passed in here so
+ * composables can call preview.setSurfaceProvider() before the camera starts.
  * Uses STRATEGY_KEEP_ONLY_LATEST to drop stale frames and keep pipeline latency bounded.
- * Never blocks the main thread — all processing runs on [inferenceExecutor].
  */
 class CameraManager(
     private val context: Context,
+    private val preview: Preview,
     private val eyeGazeModel: EyeGazeModel,
     private val gazeEstimator: GazeEstimator,
     private val viewModel: GazeBoardViewModel
@@ -42,19 +42,10 @@ class CameraManager(
 
     private val inferenceExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
-    // Exposed so BoardScreen can attach a PreviewView surface provider
-    val preview: Preview = Preview.Builder().build()
-
     companion object {
         private const val TAG = "GazeBoard"
     }
 
-    /**
-     * Bind the CameraX analysis use case to the given lifecycle.
-     * Safe to call from the main thread.
-     *
-     * TODO(Person B): Call this from GazeBoardViewModel.onCameraPermissionGranted().
-     */
     fun start(lifecycleOwner: LifecycleOwner) {
         val providerFuture = ProcessCameraProvider.getInstance(context)
 
@@ -64,7 +55,7 @@ class CameraManager(
             val imageAnalysis = ImageAnalysis.Builder()
                 .setTargetResolution(Size(640, 480))
                 .setTargetRotation(Surface.ROTATION_0)
-                // KEEP_ONLY_LATEST: discard queued frames so we always process the freshest.
+                // Discard queued frames so we always process the freshest.
                 // Prevents memory growth when inference takes longer than frame interval.
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
@@ -82,7 +73,7 @@ class CameraManager(
                     preview,
                     imageAnalysis
                 )
-                Log.i(TAG, "CameraX ImageAnalysis bound (640×480, RGBA_8888, KEEP_ONLY_LATEST)")
+                Log.i(TAG, "CameraX bound (640×480, RGBA_8888, KEEP_ONLY_LATEST, front camera)")
             } catch (e: Exception) {
                 Log.e(TAG, "CameraX bind failed: ${e.message}", e)
             }
@@ -90,11 +81,6 @@ class CameraManager(
         }, ContextCompat.getMainExecutor(context))
     }
 
-    /**
-     * Process a single camera frame through the full gaze pipeline.
-     *
-     * MUST call imageProxy.close() before returning — failure stalls the camera pipeline.
-     */
     private fun processFrame(imageProxy: ImageProxy) {
         try {
             val raw: Bitmap = imageProxy.toBitmap()
@@ -107,15 +93,14 @@ class CameraManager(
                     .also { raw.recycle() }
             } else raw
 
-            // Two-stage pipeline: EyeDetector (ML Kit) → EyeGazeModel (NPU/CPU)
             val gazeResult = gazeEstimator.estimate(bitmap, eyeGazeModel)
 
             bitmap.recycle()
 
             viewModel.onGazeUpdate(
-                gazeResult = gazeResult,
-                inferenceMs = eyeGazeModel.lastInferenceMs,
-                accelerator = eyeGazeModel.acceleratorName
+                gazeResult   = gazeResult,
+                inferenceMs  = eyeGazeModel.lastInferenceMs,
+                accelerator  = eyeGazeModel.acceleratorName
             )
 
         } catch (e: Exception) {

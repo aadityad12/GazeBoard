@@ -17,6 +17,10 @@ import java.nio.FloatBuffer
  * Output 0 heatmaps:      [1, 3, 34, 48, 80]
  * Output 1 landmarks:     [1, 34, 2]
  * Output 2 gaze_pitchyaw: [1, 2] — pitch, yaw in radians
+ *
+ * Accelerator priority: NPU+GPU → GPU → CPU.
+ * A warm-up inference is run on load to trigger LiteRT JIT compilation for the
+ * Hexagon NPU and cache the result to disk, eliminating cold-start latency.
  */
 class EyeGazeModel(private val context: Context) {
 
@@ -42,11 +46,28 @@ class EyeGazeModel(private val context: Context) {
     }
 
     fun load() {
-        // Try accelerators in priority order: NPU → GPU → CPU
+        // Try accelerators in priority order: NPU+GPU → GPU → CPU
+        // Uses Builder API per LiteRT CompiledModel spec — CompiledModel.Options.Builder
         val candidates = listOf(
-            "NPU+GPU" to { CompiledModel.create(context.assets, MODEL_ASSET, CompiledModel.Options(Accelerator.NPU, Accelerator.GPU)) },
-            "GPU"     to { CompiledModel.create(context.assets, MODEL_ASSET, CompiledModel.Options(Accelerator.GPU)) },
-            "CPU"     to { CompiledModel.create(context.assets, MODEL_ASSET) }
+            "NPU+GPU" to {
+                CompiledModel.create(
+                    context.assets, MODEL_ASSET,
+                    CompiledModel.Options.Builder()
+                        .setAccelerator(Accelerator.NPU, Accelerator.GPU)
+                        .build()
+                )
+            },
+            "GPU" to {
+                CompiledModel.create(
+                    context.assets, MODEL_ASSET,
+                    CompiledModel.Options.Builder()
+                        .setAccelerator(Accelerator.GPU)
+                        .build()
+                )
+            },
+            "CPU" to {
+                CompiledModel.create(context.assets, MODEL_ASSET)
+            }
         )
 
         var lastException: Exception? = null
@@ -58,6 +79,11 @@ class EyeGazeModel(private val context: Context) {
                 outputBuffers = mdl.createOutputBuffers()
                 acceleratorName = label
                 Log.i(TAG, "EyeGaze model loaded on $label via CompiledModel API")
+
+                // Warm-up: run one silent inference to trigger LiteRT JIT compilation
+                // for the target accelerator and cache the result to disk.
+                // This eliminates cold-start NPU latency on demo day.
+                runWarmup()
                 return
             } catch (e: Exception) {
                 Log.w(TAG, "EyeGaze: $label failed (${e.message}), trying next")
@@ -65,6 +91,17 @@ class EyeGazeModel(private val context: Context) {
             }
         }
         throw lastException ?: RuntimeException("All accelerators failed")
+    }
+
+    private fun runWarmup() {
+        try {
+            val warmup = FloatArray(INPUT_SIZE) { 0f }
+            inputBuffers!![0].writeFloat(warmup)
+            model!!.run(inputBuffers!!, outputBuffers!!)
+            Log.i(TAG, "NPU JIT warm-up complete on $acceleratorName")
+        } catch (e: Exception) {
+            Log.w(TAG, "Warm-up inference failed (non-fatal): ${e.message}")
+        }
     }
 
     fun runInference(inputBuffer: FloatBuffer): GazeAngles? {
@@ -75,7 +112,6 @@ class EyeGazeModel(private val context: Context) {
         val startMs = SystemClock.elapsedRealtime()
 
         return try {
-            // Copy FloatBuffer → FloatArray → TensorBuffer
             val inputArray = FloatArray(INPUT_SIZE)
             inputBuffer.rewind()
             inputBuffer.get(inputArray)

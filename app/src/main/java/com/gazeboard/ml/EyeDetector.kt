@@ -2,6 +2,7 @@ package com.gazeboard.ml
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.os.SystemClock
 import android.util.Log
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
@@ -13,9 +14,19 @@ import kotlin.math.hypot
 
 /**
  * Detects a face with ML Kit, crops the left eye, and converts it to the
- * 96x160 grayscale input expected by EyeGazeModel.
+ * 96×160 grayscale input expected by EyeGazeModel.
+ *
+ * Returns a [DetectResult] containing the preprocessed eye buffer, the
+ * normalized eye center position (for PiP overlay), and detection latency.
  */
 class EyeDetector {
+
+    data class DetectResult(
+        val buffer: FloatBuffer,
+        val eyeCenterNormX: Float,   // eye center X normalized to [0,1] in the rotated frame
+        val eyeCenterNormY: Float,   // eye center Y normalized to [0,1] in the rotated frame
+        val detectMs: Long
+    )
 
     companion object {
         private const val TAG = "GazeBoard"
@@ -31,7 +42,9 @@ class EyeDetector {
             .build()
     )
 
-    fun detectAndCrop(bitmap: Bitmap): FloatBuffer? {
+    fun detectAndCrop(bitmap: Bitmap): DetectResult? {
+        val startMs = SystemClock.elapsedRealtime()
+
         val inputImage = InputImage.fromBitmap(bitmap, 0)
         val faces = try {
             Tasks.await(detector.process(inputImage))
@@ -40,10 +53,12 @@ class EyeDetector {
             return null
         }
 
+        val detectMs = SystemClock.elapsedRealtime() - startMs
+
         if (faces.isEmpty()) return null
         val face = faces[0]
 
-        val leftEyePos = face.getLandmark(FaceLandmark.LEFT_EYE)?.position ?: return null
+        val leftEyePos  = face.getLandmark(FaceLandmark.LEFT_EYE)?.position  ?: return null
         val rightEyePos = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position ?: return null
 
         val interEyeDist = hypot(
@@ -59,9 +74,9 @@ class EyeDetector {
         val cx = leftEyePos.x.toInt()
         val cy = leftEyePos.y.toInt()
 
-        val left = (cx - cropW / 2).coerceAtLeast(0)
-        val top = (cy - cropH / 2).coerceAtLeast(0)
-        val right = (left + cropW).coerceAtMost(bitmap.width)
+        val left   = (cx - cropW / 2).coerceAtLeast(0)
+        val top    = (cy - cropH / 2).coerceAtLeast(0)
+        val right  = (left + cropW).coerceAtMost(bitmap.width)
         val bottom = (top + cropH).coerceAtMost(bitmap.height)
 
         if (right - left < 4 || bottom - top < 4) return null
@@ -83,7 +98,13 @@ class EyeDetector {
         }
 
         buffer.rewind()
-        return buffer
+
+        return DetectResult(
+            buffer = buffer,
+            eyeCenterNormX = leftEyePos.x / bitmap.width,
+            eyeCenterNormY = leftEyePos.y / bitmap.height,
+            detectMs = detectMs
+        )
     }
 
     fun reset() {
