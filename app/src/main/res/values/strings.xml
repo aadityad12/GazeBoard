@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GazeBoard</string>
+
+    <!-- Default 6 phrases — high-frequency clinical + home vocabulary -->
+    <string name="phrase_0">Yes</string>
+    <string name="phrase_1">No</string>
+    <string name="phrase_2">Help</string>
+    <string name="phrase_3">Thank you</string>
+    <string name="phrase_4">I need water</string>
+    <string name="phrase_5">Call nurse</string>
+
+    <!-- Calibration screen strings -->
+    <string name="calibration_title">Calibration</string>
+    <string name="calibration_instruction">Look at the red dot and hold your gaze</string>
+    <string name="calibration_complete">Calibration complete!</string>
+    <string name="calibration_point_of">Point %1$d of 4</string>
+
+    <!-- Status messages -->
+    <string name="status_no_face">No face detected — center your face in the camera</string>
+    <string name="status_too_far">Move closer to the screen</string>
+    <string name="status_too_close">Move back slightly</string>
+    <string name="status_blinking">Blink detected — pausing</string>
+
+    <!-- NPU badge strings -->
+    <string name="npu_badge_label">%1$s · %2$dms</string>
+
+    <!-- Accessibility -->
+    <string name="cd_gaze_cursor">Gaze cursor showing where you are looking</string>
+    <string name="cd_npu_badge">NPU inference status badge</string>
+    <string name="cd_phrase_cell">Phrase cell: %1$s</string>
+    <string name="cd_dwell_progress">Dwell progress: %1$d percent</string>
+</resources>
