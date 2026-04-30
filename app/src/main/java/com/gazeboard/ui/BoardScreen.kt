@@ -1,192 +1,150 @@
 package com.gazeboard.ui
 
-import androidx.camera.core.Preview
-import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import com.gazeboard.state.AppState
-import com.gazeboard.state.GazeState
-import com.gazeboard.ui.components.GazeCursor
-import com.gazeboard.ui.components.NpuBadge
-import com.gazeboard.ui.components.PhraseCell
+import com.gazeboard.state.GazeBoardViewModel
 
-/**
- * The main communication board: a 2×3 grid of phrase cells occupying the full screen.
- *
- * PERSON C OWNS THIS FILE.
- *
- * Layout:
- *   ┌──────────┬──────────┬──────────┐
- *   │  cell 0  │  cell 1  │  cell 2  │
- *   ├──────────┼──────────┼──────────┤
- *   │  cell 3  │  cell 4  │  cell 5  │
- *   └──────────┴──────────┴──────────┘
- *
- * The gaze cursor and NPU badge float as overlays above the grid.
- * A "no face" warning overlay appears when the camera loses the face.
- */
 @Composable
-fun BoardScreen(
-    gazeState: GazeState,
-    appState: AppState,
-    phrases: List<String>,
-    onRecalibrate: () -> Unit,
-    onPreviewSurfaceReady: ((Preview.SurfaceProvider) -> Unit)? = null,
-    modifier: Modifier = Modifier
-) {
-    val selectedCell = (appState as? AppState.Selected)?.cellIndex
+fun BoardScreen(viewModel: GazeBoardViewModel) {
+    val gazePoint by viewModel.gazePoint.collectAsState()
+    val dwellingCell by viewModel.dwellingCellIndex.collectAsState()
+    val dwellProgress by viewModel.dwellProgress.collectAsState()
+    val lastSpoken by viewModel.lastSpokenPhrase.collectAsState()
+    val inferenceMs by viewModel.inferenceMs.collectAsState()
+    val accelerator by viewModel.acceleratorName.collectAsState()
 
-    Box(
-        modifier = modifier
+    BoxWithConstraints(
+        modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF050810))
+            .background(Color(0xFF0D0D0D))
     ) {
-        // 2×3 phrase grid — takes full screen
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            // Row 0: cells 0, 1, 2
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                for (col in 0..2) {
-                    val cellIndex = col
-                    PhraseCell(
-                        phrase = phrases.getOrElse(cellIndex) { "" },
-                        isHovered = gazeState.hoveredCell == cellIndex,
-                        isSelected = selectedCell == cellIndex,
-                        dwellProgress = if (gazeState.hoveredCell == cellIndex)
-                            gazeState.dwellProgress else 0f,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxSize()
-                    )
-                }
-            }
+        val density = LocalDensity.current
 
-            // Row 1: cells 3, 4, 5
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                for (col in 0..2) {
-                    val cellIndex = 3 + col
-                    PhraseCell(
-                        phrase = phrases.getOrElse(cellIndex) { "" },
-                        isHovered = gazeState.hoveredCell == cellIndex,
-                        isSelected = selectedCell == cellIndex,
-                        dwellProgress = if (gazeState.hoveredCell == cellIndex)
-                            gazeState.dwellProgress else 0f,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxSize()
-                    )
+        Column(modifier = Modifier.fillMaxSize()) {
+            for (row in 0..1) {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) {
+                    for (col in 0..2) {
+                        val cellIndex = row * 3 + col
+                        val phrase = viewModel.phrases[cellIndex]
+                        val isDwelling = dwellingCell == cellIndex
+
+                        androidx.compose.foundation.layout.Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .padding(6.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (isDwelling) Color(0xFF1A3A2A) else Color(0xFF1A1A1A)
+                                )
+                                .border(
+                                    width = if (isDwelling) 2.dp else 1.dp,
+                                    color = if (isDwelling) Color(0xFF10B981) else Color(0xFF2E2E2E),
+                                    shape = RoundedCornerShape(12.dp)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = phrase,
+                                    color = if (isDwelling) Color(0xFF10B981) else Color.White,
+                                    fontSize = 22.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(horizontal = 8.dp)
+                                )
+                                if (isDwelling && dwellProgress > 0f) {
+                                    Spacer(Modifier.height(8.dp))
+                                    Canvas(modifier = Modifier.size(36.dp)) {
+                                        drawArc(
+                                            color = Color(0xFF10B981),
+                                            startAngle = -90f,
+                                            sweepAngle = 360f * dwellProgress,
+                                            useCenter = false,
+                                            style = Stroke(width = 4.dp.toPx())
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        // Gaze cursor overlay — floats above everything
-        GazeCursor(gazePoint = gazeState.gazePoint)
-
-        // NPU badge — top-right corner, always visible
-        NpuBadge(
-            accelerator = gazeState.accelerator,
-            inferenceMs = gazeState.inferenceMs,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(12.dp)
-        )
-
-        // Distance warning — top-center
-        gazeState.distanceWarning?.let { warning ->
-            Text(
-                text = warning,
-                color = Color(0xFFFFD600),
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 12.dp)
-                    .background(Color.Black.copy(alpha = 0.6f))
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-        }
-
-        // No face detected overlay
-        if (!gazeState.faceDetected) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.5f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "No face detected\nCenter your face in the camera",
-                    color = Color.White,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Medium,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        gazePoint?.let { (sx, sy) ->
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                drawCircle(
+                    color = Color(0x8010B981),
+                    radius = with(density) { 18.dp.toPx() },
+                    center = Offset(sx, sy)
+                )
+                drawCircle(
+                    color = Color(0xFF10B981),
+                    radius = with(density) { 6.dp.toPx() },
+                    center = Offset(sx, sy)
                 )
             }
         }
 
-        // Camera preview PiP — bottom-left corner, helps user center their face
-        if (onPreviewSurfaceReady != null) {
-            AndroidView(
-                factory = { ctx ->
-                    PreviewView(ctx).apply {
-                        scaleType = PreviewView.ScaleType.FILL_CENTER
-                        onPreviewSurfaceReady(surfaceProvider)
-                    }
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 12.dp, bottom = 12.dp)
-                    .size(width = 120.dp, height = 160.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .border(1.5.dp, Color(0xFF3D6B9E), RoundedCornerShape(10.dp))
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(12.dp)
+                .background(Color(0xCC000000), RoundedCornerShape(6.dp))
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+        ) {
+            Text(
+                text = "${inferenceMs}ms  $accelerator",
+                color = Color(0xFF10B981),
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace
             )
         }
 
-        // Triple-tap anywhere to recalibrate (hidden but discoverable)
-        // TODO(Person C): Make this more discoverable in the UI — maybe a small
-        // "Recalibrate" button that appears after 5s of no face detection.
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onDoubleTap = { /* ignore */ },
-                        onLongPress = { onRecalibrate() }  // long press = recalibrate
-                    )
-                }
-        )
+        lastSpoken?.let {
+            Text(
+                text = "\"$it\"",
+                color = Color(0xFFE8E6E0),
+                fontSize = 16.sp,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 24.dp)
+                    .background(Color(0xCC000000), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+        }
     }
 }

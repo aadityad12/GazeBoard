@@ -1,158 +1,122 @@
-# GazeBoard — Technical Architecture
+# GazeBoard - Technical Architecture
 
 ## System Diagram
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Samsung Galaxy S25 Ultra                      │
-│                                                                   │
-│  ┌──────────────┐    ┌──────────────────────────────────────┐   │
-│  │ Front Camera │───▶│         CameraX ImageAnalysis         │   │
-│  │  640×480     │    │    (background executor thread)       │   │
-│  │   15 FPS     │    └──────────────┬───────────────────────┘   │
-│  └──────────────┘                   │ ImageProxy (RGBA_8888)     │
-│                                     ▼                            │
-│                        ┌────────────────────────┐               │
-│                        │      EyeDetector        │               │
-│                        │  android.media.Face     │  [CPU ~30ms]  │
-│                        │  Detector → eye midpt   │               │
-│                        │  crop → 160×96 resize   │               │
-│                        │  grayscale normalize    │               │
-│                        └────────────┬───────────┘               │
-│                                     │ FloatBuffer[15360]         │
-│                                     │ (96×160 grayscale [0,1])   │
-│                                     ▼                            │
-│                        ┌────────────────────────┐               │
-│                        │    EyeGazeModel         │               │
-│                        │  CompiledModel API      │  [NPU ~8ms]   │
-│                        │  Accelerator.NPU,GPU    │               │
-│                        │  eyegaze.tflite         │               │
-│                        └────────────┬───────────┘               │
-│                                     │ GazeAngles(pitch, yaw)     │
-│                                     │ (radians, [1,2] output)    │
-│                                     ▼                            │
-│                        ┌────────────────────────┐               │
-│                        │    GazeEstimator        │               │
-│                        │  EMA smoothing α=0.3    │               │
-│                        └────────────┬───────────┘               │
-│                                     │ smoothed (pitch, yaw)      │
-│                                     ▼                            │
-│                        ┌────────────────────────┐               │
-│                        │  CalibrationEngine      │               │
-│                        │  4-pt pitch/yaw→screen  │               │
-│                        │  affine matrix          │               │
-│                        └────────────┬───────────┘               │
-│                                     │ PointF (screenX, screenY)  │
-│                                     ▼                            │
-│                        ┌────────────────────────┐               │
-│                        │  GazeBoardViewModel     │               │
-│                        │  mapToCell(screenPos)   │               │
-│                        │  DwellTimer (1.5s)      │               │
-│                        │  StateFlow<GazeState>   │               │
-│                        └────────────┬───────────┘               │
-│                                     │                            │
-│              ┌──────────────────────┼──────────────────┐        │
-│              ▼                      ▼                   ▼        │
-│      ┌──────────────┐   ┌──────────────────┐  ┌──────────────┐ │
-│      │  BoardScreen  │   │  GazeCursor      │  │  TtsManager  │ │
-│      │  PhraseCell   │   │  Canvas overlay   │  │  speak()     │ │
-│      │  DwellRing    │   │  NpuBadge        │  └──────────────┘ │
-│      └──────────────┘   └──────────────────┘                   │
-└─────────────────────────────────────────────────────────────────┘
+```text
++-----------------------------------------------------------------+
+|                    Samsung Galaxy S25 Ultra                     |
+|                                                                 |
+|  Front Camera                                                   |
+|      | 640x480 RGBA_8888 frames                                 |
+|      v                                                          |
+|  CameraX ImageAnalysis                                          |
+|      | STRATEGY_KEEP_ONLY_LATEST, background executor           |
+|      v                                                          |
+|  EyeDetector                                                    |
+|      | ARGB_8888 -> RGB_565 copy for android.media.FaceDetector |
+|      | face midpoint + eye distance                             |
+|      | crop eye region from original frame                      |
+|      | resize to 160x96                                         |
+|      | grayscale normalize [0,1]                                |
+|      v                                                          |
+|  FloatBuffer[15360]                                             |
+|      v                                                          |
+|  EyeGazeModel                                                   |
+|      | eyegaze.tflite via LiteRT CompiledModel                  |
+|      | Accelerator.NPU preferred, Accelerator.GPU fallback      |
+|      | outputs: heatmaps, landmarks, gaze_pitchyaw              |
+|      v                                                          |
+|  GazeAngles(pitch, yaw) in radians                              |
+|      v                                                          |
+|  GazeEstimator                                                  |
+|      | EMA smoothing, alpha = 0.3                               |
+|      v                                                          |
+|  CalibrationEngine                                              |
+|      | 4-point pitch/yaw -> screen affine transform             |
+|      v                                                          |
+|  GazeBoardViewModel                                             |
+|      | map screen point -> 2x3 cell                             |
+|      | dwell timer, StateFlow<GazeState>                        |
+|      v                                                          |
+|  BoardScreen + GazeCursor + NpuBadge + TtsManager               |
++-----------------------------------------------------------------+
 ```
 
 ---
 
-## Inference Pipeline — Latency Budget
+## Inference Pipeline - Latency Budget
 
-Target: **< 60ms total per frame** (sufficient for 15 FPS gaze tracking)
+Target: **10+ FPS end-to-end** with bounded latency.
 
 | Stage | Target | Notes |
 |-------|--------|-------|
-| Camera → ImageProxy | ~0ms | Hardware pipeline |
-| FaceDetector (eye locate) | **~30ms** | CPU, `android.media.FaceDetector` |
-| Eye crop + resize to 160×96 | ~2ms | CPU |
+| Camera -> ImageProxy | ~0ms | Hardware pipeline |
+| FaceDetector eye locate | ~20-40ms | CPU, `android.media.FaceDetector` |
+| Eye crop + resize to 160x96 | ~2ms | CPU |
 | Grayscale normalize | ~1ms | CPU |
-| EyeGaze NPU inference | **~8ms** | Hexagon NPU via CompiledModel API |
-| EMA smoothing | ~0.5ms | CPU, simple arithmetic |
-| Calibration affine transform | ~0.5ms | Matrix multiply |
-| ViewModel StateFlow emission | ~0.5ms | Coroutine dispatch |
-| **Total** | **~42ms** | ~24 FPS theoretical max |
+| EyeGaze inference | ~8ms target | Hexagon NPU via LiteRT `CompiledModel` |
+| EMA smoothing | <1ms | CPU arithmetic |
+| Calibration affine transform | <1ms | 2x3 matrix multiply |
+| ViewModel StateFlow emission | <1ms | UI state update |
 
-If EyeGaze inference is forced to CPU fallback: NPU stage rises to ~80ms. Display warning via NpuBadge. FaceDetector is always CPU — that's expected and acceptable.
+If EyeGaze inference falls back to GPU or CPU, the `NpuBadge` should make that visible. `FaceDetector` itself is CPU-bound by design.
 
 ---
 
-## CompiledModel API — Kotlin Implementation
-
-LiteRT JIT-compiles the model for the Hexagon NPU on first launch and caches the result.
-**Launch the app once before the demo** to warm the cache. No AOT compilation or Qualcomm AI Hub account required.
+## EyeGaze Model Contract
 
 ```kotlin
-// FaceLandmarkModel.kt
+// EyeGazeModel.kt
+fun runInference(inputBuffer: FloatBuffer): GazeAngles?
 
-import com.google.ai.edge.litert.CompiledModel
-import com.google.ai.edge.litert.Accelerator
-
-class FaceLandmarkModel(private val context: Context) {
-
-    private var model: CompiledModel? = null
-    private var lastAccelerator: String = "UNKNOWN"
-
-    fun load() {
-        // NPU preferred; GPU as fallback if any op isn't NPU-supported.
-        // LiteRT JIT-compiles for Hexagon NPU on first launch (~2-5s), then caches.
-        val options = CompiledModel.Options.Builder()
-            .setAccelerator(Accelerator.NPU, Accelerator.GPU)
-            .build()
-
-        // First launch: JIT compilation. Subsequent launches: cached compiled model.
-        model = CompiledModel.create(
-            context.assets,
-            "face_landmark.tflite",
-            options
-        )
-
-        // Verify we're actually on NPU — this is critical for judging
-        lastAccelerator = model?.accelerator?.name ?: "UNKNOWN"
-        if (lastAccelerator != "NPU") {
-            Log.w("GazeBoard", "WARNING: Running on $lastAccelerator, not NPU!")
-        } else {
-            Log.i("GazeBoard", "Confirmed NPU execution via CompiledModel API")
-        }
-    }
-
-    fun runInference(bitmap: Bitmap): FloatArray? {
-        val mdl = model ?: return null
-        val startMs = SystemClock.elapsedRealtime()
-
-        val inputBuffer = bitmapToFloatBuffer(bitmap)  // 192×192×3 normalized
-        val outputBuffer = FloatArray(478 * 3)
-
-        mdl.run(arrayOf(inputBuffer), arrayOf(outputBuffer))
-
-        val inferenceMs = SystemClock.elapsedRealtime() - startMs
-        Log.d("GazeBoard", "Inference: ${inferenceMs}ms on $lastAccelerator")
-
-        return outputBuffer
-    }
-
-    private fun bitmapToFloatBuffer(bitmap: Bitmap): FloatBuffer {
-        // Resize to 192×192, convert to normalized float [0,1]
-        val scaled = Bitmap.createScaledBitmap(bitmap, 192, 192, false)
-        val buffer = FloatBuffer.allocate(192 * 192 * 3)
-        val pixels = IntArray(192 * 192)
-        scaled.getPixels(pixels, 0, 192, 0, 0, 192, 192)
-        for (pixel in pixels) {
-            buffer.put(((pixel shr 16) and 0xFF) / 255f)  // R
-            buffer.put(((pixel shr 8)  and 0xFF) / 255f)  // G
-            buffer.put((pixel          and 0xFF) / 255f)  // B
-        }
-        buffer.rewind()
-        return buffer
-    }
-}
+data class GazeAngles(
+    val pitch: Float, // radians, positive = down
+    val yaw: Float    // radians, positive = right
+)
 ```
+
+Input comes from `EyeDetector.detectAndCrop()`:
+
+```kotlin
+// EyeDetector.kt
+fun detectAndCrop(bitmap: Bitmap): FloatBuffer?
+```
+
+Tensor contract:
+
+| Tensor | Shape | Meaning |
+|--------|-------|---------|
+| Input | `FloatBuffer[15360]` | `96x160` grayscale `[0,1]` eye crop |
+| Output 0 | `[1, 3, 34, 48, 80]` | heatmaps |
+| Output 1 | `[1, 34, 2]` | landmarks |
+| Output 2 | `[1, 2]` | `gaze_pitchyaw` |
+
+Only output 2 drives the current gaze cursor. Heatmaps and landmarks are allocated because the model produces them, but the board uses pitch/yaw for calibration.
+
+---
+
+## CompiledModel API
+
+```kotlin
+// EyeGazeModel.kt
+val model = CompiledModel.create(
+    context.assets,
+    "eyegaze.tflite",
+    CompiledModel.Options(Accelerator.NPU, Accelerator.GPU)
+)
+
+val inputs = model.createInputBuffers()
+val outputs = model.createOutputBuffers()
+
+inputs[0].writeFloat(inputArray)
+model.run(inputs, outputs)
+
+val pitchYaw = outputs[2].readFloat()
+val pitch = pitchYaw[0]
+val yaw = pitchYaw[1]
+```
+
+The app attempts NPU first, then GPU, then CPU. The demo target is NPU execution, and fallback should be visible in logs and the badge.
 
 ---
 
@@ -160,346 +124,203 @@ class FaceLandmarkModel(private val context: Context) {
 
 ```kotlin
 // CameraManager.kt
-
 val imageAnalysis = ImageAnalysis.Builder()
     .setTargetResolution(Size(640, 480))
     .setTargetRotation(Surface.ROTATION_0)
-    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)  // never queue frames
+    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
     .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
     .build()
 
 imageAnalysis.setAnalyzer(inferenceExecutor) { imageProxy ->
-    val bitmap = imageProxy.toBitmap()   // RGBA_8888 direct conversion
-    val landmarks = faceLandmarkModel.runInference(bitmap)
-    if (landmarks != null) {
-        val gaze = gazeEstimator.estimate(landmarks)
-        viewModel.onGazeUpdate(gaze)
+    try {
+        val bitmap = imageProxy.toBitmap()
+        val gazeResult = gazeEstimator.estimate(bitmap, eyeGazeModel)
+        viewModel.onGazeUpdate(
+            gazeResult = gazeResult,
+            inferenceMs = eyeGazeModel.lastInferenceMs,
+            accelerator = eyeGazeModel.acceleratorName
+        )
+    } finally {
+        imageProxy.close()
     }
-    imageProxy.close()  // MUST call or pipeline stalls
 }
-
-// Bind to lifecycle
-val cameraProvider = ProcessCameraProvider.getInstance(context).await()
-cameraProvider.bindToLifecycle(
-    lifecycleOwner,
-    CameraSelector.DEFAULT_FRONT_CAMERA,
-    imageAnalysis
-)
 ```
+
+`STRATEGY_KEEP_ONLY_LATEST` is important: stale frames are dropped so gaze latency stays bounded even when detection or inference takes longer than a frame interval.
 
 ---
 
-## Bitmap Preprocessing Pipeline
+## Eye Crop Preprocessing
 
-```
-ImageProxy (RGBA_8888, 640×480)
-    │
-    ▼
-toBitmap() — zero-copy when format matches
-    │
-    ▼
-Face detection region crop (optional — use full frame if no face detector)
-    │
-    ▼
-Bitmap.createScaledBitmap(192, 192, bilinear=true)
-    │
-    ▼
-getPixels() → IntArray
-    │
-    ▼
-Normalize: R/255f, G/255f, B/255f → FloatBuffer[192*192*3]
-    │
-    ▼
-CompiledModel.run(input: FloatBuffer, output: FloatArray[1434])
+```text
+ImageProxy (RGBA_8888, 640x480)
+    |
+    v
+toBitmap()
+    |
+    v
+ARGB_8888 copy -> RGB_565 copy for FaceDetector
+    |
+    v
+FaceDetector.findFaces()
+    |
+    v
+eye midpoint + eye distance
+    |
+    v
+crop eye region from original ARGB frame
+    |
+    v
+Bitmap.createScaledBitmap(width=160, height=96)
+    |
+    v
+BT.601 grayscale normalize to [0,1]
+    |
+    v
+FloatBuffer[15360]
 ```
 
-Note: The face_landmark model expects the **full face**, not just the eye region. If inference quality is poor, add a face bounding-box detection step first (can use a second small TFLite model or MediaPipe's BlazeFace).
+The output layout is row-major height x width. The model expects a single-channel grayscale eye crop, not a full-face RGB tensor.
 
 ---
 
-## Gaze Math Module
-
-### Normalization Formula
-```kotlin
-// GazeEstimator.kt
-
-fun extractGaze(landmarks: FloatArray): PointF? {
-    // Landmark layout: [x0,y0,z0, x1,y1,z1, ...]
-    fun lm(idx: Int) = PointF(landmarks[idx*3], landmarks[idx*3+1])
-
-    val irisL  = lm(468)   // Left iris center
-    val irisR  = lm(473)   // Right iris center
-    val cornerLOuter = lm(33)
-    val cornerLInner = lm(133)
-    val lidLUpper    = lm(159)
-    val lidLLower    = lm(145)
-    val cornerROuter = lm(362)
-    val cornerRInner = lm(263)
-
-    val gazeLx = (irisL.x - cornerLOuter.x) / (cornerLInner.x - cornerLOuter.x)
-    val gazeRx = (irisR.x - cornerRInner.x) / (cornerROuter.x - cornerRInner.x)
-    val gazeY  = (irisL.y - lidLUpper.y)    / (lidLLower.y   - lidLUpper.y)
-
-    // Average left and right eyes for stability
-    val rawGazeX = (gazeLx + gazeRx) / 2f
-    val rawGazeY = gazeY
-
-    return PointF(rawGazeX.coerceIn(0f, 1f), rawGazeY.coerceIn(0f, 1f))
-}
-```
+## Gaze Math
 
 ### EMA Smoothing
-```kotlin
-private var smoothedGaze: PointF = PointF(0.5f, 0.5f)
-private val alpha = 0.3f   // higher = more responsive, lower = smoother
 
-fun smooth(raw: PointF): PointF {
-    smoothedGaze = PointF(
-        alpha * raw.x + (1f - alpha) * smoothedGaze.x,
-        alpha * raw.y + (1f - alpha) * smoothedGaze.y
-    )
-    return smoothedGaze
+```kotlin
+private val alpha = 0.3f
+private var hasFirstSample = false
+private var smoothedPitch = 0f
+private var smoothedYaw = 0f
+
+fun smooth(rawPitch: Float, rawYaw: Float): Pair<Float, Float> {
+    if (!hasFirstSample) {
+        smoothedPitch = rawPitch
+        smoothedYaw = rawYaw
+        hasFirstSample = true
+    } else {
+        smoothedPitch = alpha * rawPitch + (1f - alpha) * smoothedPitch
+        smoothedYaw = alpha * rawYaw + (1f - alpha) * smoothedYaw
+    }
+    return smoothedPitch to smoothedYaw
 }
 ```
 
-### Blink Detection (Eye Aspect Ratio)
-```kotlin
-fun isBlinking(landmarks: FloatArray): Boolean {
-    fun lm(idx: Int) = PointF(landmarks[idx*3], landmarks[idx*3+1])
+Pitch and yaw are smoothed independently. The first sample initializes the filter directly to avoid startup lag.
 
-    val upper = lm(159)
-    val lower = lm(145)
-    val outer = lm(33)
-    val inner = lm(133)
+### Direction Conventions
 
-    val vertDist = abs(upper.y - lower.y)
-    val horizDist = abs(inner.x - outer.x)
-
-    val ear = if (horizDist > 0) vertDist / horizDist else 1f
-    return ear < 0.2f   // blink threshold
-}
-```
+| Value | Meaning |
+|-------|---------|
+| `pitch > 0` | looking down |
+| `pitch < 0` | looking up |
+| `yaw > 0` | looking right |
+| `yaw < 0` | looking left |
 
 ---
 
 ## Calibration System
 
 ### 4-Point Calibration Protocol
-```
-Screen corners displayed in sequence:
-  [0] Top-left     → user looks here for 1.5s → record gazePoint[0]
-  [1] Top-right    → user looks here for 1.5s → record gazePoint[1]
-  [2] Bottom-left  → user looks here for 1.5s → record gazePoint[2]
-  [3] Bottom-right → user looks here for 1.5s → record gazePoint[3]
+
+```text
+Screen targets displayed in sequence:
+  [0] Top-left     -> record screen point + current pitch/yaw
+  [1] Top-right    -> record screen point + current pitch/yaw
+  [2] Bottom-left  -> record screen point + current pitch/yaw
+  [3] Bottom-right -> record screen point + current pitch/yaw
 ```
 
-### Affine Transform Computation
+### Affine Transform
+
 ```kotlin
 // CalibrationEngine.kt
-
-// Given: screenPoints[4] (known screen corners) + gazePoints[4] (recorded raw gaze)
-// Compute 2×3 affine matrix A such that: A * [gx, gy, 1]^T ≈ [sx, sy]
-
-// Using OpenCV-style Least Squares (manual implementation):
-// Solve: [screen_x, screen_y] = A * [gaze_x, gaze_y, 1]
-// Min 3 non-collinear points needed; 4 provides overdetermined system → use pseudoinverse
-
-fun computeAffineTransform() {
-    // Build matrices G (gaze, N×3) and S (screen, N×2)
-    // A = (G^T * G)^-1 * G^T * S   (least squares)
-    // Store A as FloatArray(6) = [a00, a01, a02, a10, a11, a12]
-}
-
-fun applyCalibration(rawGaze: PointF): PointF {
-    val sx = a[0]*rawGaze.x + a[1]*rawGaze.y + a[2]
-    val sy = a[3]*rawGaze.x + a[4]*rawGaze.y + a[5]
-    return PointF(sx, sy)
-}
+fun addCalibrationPoint(screenPoint: PointF, pitchYaw: PointF)
+fun computeAffineTransform(): Boolean
+fun applyCalibration(pitch: Float, yaw: Float): PointF
+fun reset()
 ```
+
+Affine model:
+
+```text
+[screenX]   [a00 a01 a02]   [pitch]
+[screenY] = [a10 a11 a12] * [yaw  ]
+                             [1    ]
+```
+
+With four points, the engine solves an overdetermined least-squares fit. At least three non-collinear gaze points are required.
+
+### Integration Status
+
+The affine math exists in `CalibrationEngine.kt`. Some ViewModel and calibration-screen call sites are still marked as TODOs in code, so the current docs describe the intended contract and implemented math without claiming the full calibration flow is complete.
 
 ---
 
 ## Dwell Selection System
 
 ```kotlin
-// GazeBoardViewModel.kt
-
-private val DWELL_THRESHOLD_MS = 1500L
-private val COOLDOWN_MS = 500L
-
-private var dwellStartMs: Long = 0L
-private var currentDwellCell: Int? = null
+private const val DWELL_THRESHOLD_MS = 1500L
+private const val COOLDOWN_MS = 500L
 
 fun onCellHovered(cellIndex: Int?) {
     when {
         cellIndex == null -> resetDwell()
-        cellIndex != currentDwellCell -> {
-            // New cell — restart timer
-            currentDwellCell = cellIndex
-            dwellStartMs = SystemClock.elapsedRealtime()
-        }
-        else -> {
-            // Same cell — check progress
-            val elapsed = SystemClock.elapsedRealtime() - dwellStartMs
-            val progress = (elapsed.toFloat() / DWELL_THRESHOLD_MS).coerceIn(0f, 1f)
-            _gazeState.update { it.copy(dwellProgress = progress) }
-
-            if (elapsed >= DWELL_THRESHOLD_MS) {
-                selectCell(cellIndex)
-            }
-        }
-    }
-}
-
-private fun selectCell(index: Int) {
-    val phrase = phrases[index]
-    ttsManager.speak(phrase)
-    _appState.value = AppState.Selected(index)
-    viewModelScope.launch {
-        delay(COOLDOWN_MS)
-        resetDwell()
-        _appState.value = AppState.Tracking
+        cellIndex != currentDwellCell -> startNewDwell(cellIndex)
+        else -> updateProgressAndSelectIfReady(cellIndex)
     }
 }
 ```
+
+The ViewModel maps calibrated screen pixels to a 2x3 row-major grid:
+
+```text
+0 | 1 | 2
+--+---+--
+3 | 4 | 5
+```
+
+When the same cell remains hovered for 1.5 seconds, `TtsManager.speak(phrase)` is called and the UI briefly shows the selected state.
 
 ---
 
-## TTS Integration
+## State Contract
 
 ```kotlin
-// TtsManager.kt
-
-class TtsManager(context: Context) {
-    private var tts: TextToSpeech? = null
-    private var isReady = false
-
-    fun initialize(onReady: () -> Unit) {
-        tts = TextToSpeech(context) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.US
-                isReady = true
-                onReady()
-            }
-        }
-    }
-
-    fun speak(phrase: String) {
-        if (!isReady) return
-        // QUEUE_FLUSH interrupts any current speech — intentional
-        tts?.speak(phrase, TextToSpeech.QUEUE_FLUSH, null, phrase)
-    }
-
-    fun shutdown() = tts?.shutdown()
-}
+data class GazeState(
+    val gazePoint: Offset?,
+    val hoveredCell: Int?,
+    val dwellProgress: Float,
+    val inferenceMs: Long,
+    val accelerator: String,
+    val faceDetected: Boolean,
+    val rawPitch: Float,
+    val rawYaw: Float
+)
 ```
 
-**Pre-warming:** Call `initialize()` in `Application.onCreate()` so TTS engine is ready before the first selection. First speech after cold start has ~200ms delay; subsequent calls are instant.
-
----
-
-## State Management
-
-```kotlin
-// AppState.kt
-sealed class AppState {
-    object Calibrating : AppState()
-    object Tracking : AppState()
-    data class Selected(val cellIndex: Int) : AppState()
-    object Cooldown : AppState()
-}
-
-// GazeBoardViewModel StateFlow
-private val _appState = MutableStateFlow<AppState>(AppState.Calibrating)
-val appState: StateFlow<AppState> = _appState.asStateFlow()
-
-private val _gazeState = MutableStateFlow(GazeState())
-val gazeState: StateFlow<GazeState> = _gazeState.asStateFlow()
-```
+`rawPitch` and `rawYaw` are the smoothed model outputs used for calibration capture. `gazePoint` is the calibrated screen position in pixels when calibration is active and available.
 
 ---
 
 ## NPU Verification
 
-```kotlin
-// In FaceLandmarkModel.kt, called from initialization:
-val acceleratorName = model?.accelerator?.name ?: "UNKNOWN"
+Evidence to show during judging:
 
-// In NpuBadge.kt composable — visible on board screen at all times:
-@Composable
-fun NpuBadge(accelerator: String, inferenceMs: Long) {
-    val color = when (accelerator) {
-        "NPU" -> Color(0xFF00E676)   // green — on NPU
-        "GPU" -> Color(0xFFFFD600)   // yellow — fallback
-        else  -> Color(0xFFFF1744)   // red — CPU fallback (bad)
-    }
-    Box(modifier = Modifier.background(color, RoundedCornerShape(4.dp)).padding(4.dp)) {
-        Text("$accelerator · ${inferenceMs}ms", color = Color.Black, fontSize = 11.sp)
-    }
-}
-```
+- `EyeGazeModel.kt` uses LiteRT `CompiledModel`, not `Interpreter`.
+- The model is created with `Accelerator.NPU` preferred and `Accelerator.GPU` fallback.
+- The `NpuBadge` displays accelerator name and inference latency.
+- Logcat includes EyeGaze model load and per-frame inference timing.
 
 ---
 
-## Head Pose Fallback (activate if iris fails at Hour 8)
+## Head Pose Pivot
 
-### Key Landmarks for Head Pose
-- 1: Nose tip
-- 33: Left eye outer corner
-- 263: Right eye outer corner
-- 61: Mouth left corner
-- 291: Mouth right corner
-- 199: Chin
+If EyeGaze accuracy is below the Hour 8 threshold after calibration, the planned pivot is to use head pose derived from available landmark geometry or another face-pose signal. The rest of the pipeline stays mostly the same:
 
-### Simplified Pitch/Yaw Derivation
-```kotlin
-// In GazeEstimator.kt — replace extractGaze() with this:
-
-fun extractHeadPose(landmarks: FloatArray): PointF {
-    fun lm(idx: Int) = PointF(landmarks[idx*3], landmarks[idx*3+1])
-
-    val noseTip   = lm(1)
-    val leftEye   = lm(33)
-    val rightEye  = lm(263)
-    val chin      = lm(199)
-
-    // Face center
-    val faceX = (leftEye.x + rightEye.x) / 2f
-    val faceY = (noseTip.y + chin.y) / 2f
-
-    // Yaw: nose tip deviation from eye midpoint (normalized by eye width)
-    val eyeWidth = abs(rightEye.x - leftEye.x)
-    val yaw = (noseTip.x - faceX) / eyeWidth   // -1=left, +1=right
-
-    // Pitch: nose tip position relative to face vertical span
-    val faceHeight = abs(chin.y - (leftEye.y + rightEye.y) / 2f)
-    val pitch = (noseTip.y - faceY) / faceHeight   // -1=up, +1=down
-
-    // Normalize to [0,1] for consistency with iris gaze format
-    return PointF(
-        (yaw + 1f).coerceIn(0f, 2f) / 2f,
-        (pitch + 1f).coerceIn(0f, 2f) / 2f
-    )
-}
+```text
+camera -> face/eye signal -> pitch/yaw-like values -> CalibrationEngine -> grid cell
 ```
 
-No model change needed. Same CompiledModel. Same NPU inference. Same demo narrative.
-
----
-
-## Distance Monitoring
-
-```kotlin
-// Use inter-pupillary distance (landmarks 468 ↔ 473) as face-distance proxy
-
-fun estimateDistance(landmarks: FloatArray): Float {
-    val irisL = PointF(landmarks[468*3], landmarks[468*3+1])
-    val irisR = PointF(landmarks[473*3], landmarks[473*3+1])
-    val ipd = sqrt((irisR.x - irisL.x).pow(2) + (irisR.y - irisL.y).pow(2))
-    // ipd in normalized [0,1] coords; typical face-filling distance: ipd ~ 0.15–0.25
-    return ipd
-}
-
-// Show "Move closer" overlay if ipd < 0.10 (face too small / too far)
-// Show "Move back"  overlay if ipd > 0.35 (face too close, landmarks degrade)
-```
+The demo narrative should be adjusted only if this pivot is actually implemented.

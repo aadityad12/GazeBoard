@@ -1,15 +1,11 @@
 package com.gazeboard.state
 
-import android.content.Context
-import android.graphics.PointF
+import android.app.Application
 import android.os.SystemClock
 import android.util.Log
-import androidx.compose.ui.geometry.Offset
-import androidx.camera.core.Preview
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.gazeboard.GazeBoardApplication
 import com.gazeboard.audio.TtsManager
 import com.gazeboard.calibration.CalibrationEngine
 import com.gazeboard.camera.CameraManager
@@ -20,207 +16,189 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/**
- * Published to UI on every frame. All fields safe to read on the main thread.
- *
- * gazePoint is in screen pixels; null when no face is detected.
- * pitch/yaw are in the model's raw radian space (logged/debug only — not shown in UI).
- */
-data class GazeState(
-    val gazePoint: Offset? = null,       // calibrated position in screen pixels
-    val hoveredCell: Int? = null,        // 0–5 (row-major 2×3 grid)
-    val dwellProgress: Float = 0f,       // 0.0–1.0
-    val inferenceMs: Long = 0L,
-    val accelerator: String = "—",
-    val faceDetected: Boolean = false,
-    val distanceWarning: String? = null, // non-null when face is too close/far
-    val rawPitch: Float = 0f,            // for debug overlay / calibration
-    val rawYaw: Float = 0f
-)
+class GazeBoardViewModel(application: Application) : AndroidViewModel(application) {
 
-class GazeBoardViewModel : ViewModel() {
-
-    private val _appState = MutableStateFlow<AppState>(AppState.Tracking)
+    private val _appState = MutableStateFlow<AppState>(AppState.Initializing)
     val appState: StateFlow<AppState> = _appState.asStateFlow()
 
-    private val _gazeState = MutableStateFlow(GazeState())
-    val gazeState: StateFlow<GazeState> = _gazeState.asStateFlow()
+    private val _gazePoint = MutableStateFlow<Pair<Float, Float>?>(null)
+    val gazePoint: StateFlow<Pair<Float, Float>?> = _gazePoint.asStateFlow()
 
-    val phrases = listOf("Yes", "No", "Help", "Thank you", "I need water", "Call nurse")
+    private val _dwellingCellIndex = MutableStateFlow(-1)
+    val dwellingCellIndex: StateFlow<Int> = _dwellingCellIndex.asStateFlow()
 
-    private val DWELL_THRESHOLD_MS = 1500L
-    private val COOLDOWN_MS = 500L
+    private val _dwellProgress = MutableStateFlow(0f)
+    val dwellProgress: StateFlow<Float> = _dwellProgress.asStateFlow()
 
-    private var currentDwellCell: Int? = null
-    private var dwellStartMs: Long = 0L
+    private val _lastSpokenPhrase = MutableStateFlow<String?>(null)
+    val lastSpokenPhrase: StateFlow<String?> = _lastSpokenPhrase.asStateFlow()
 
-    // Screen dimensions needed to convert calibrated screen coords → Offset
-    // Set by BoardScreen via onGloballyPositioned
-    var screenWidth: Float = 1080f
-    var screenHeight: Float = 2400f
+    private val _inferenceMs = MutableStateFlow(0L)
+    val inferenceMs: StateFlow<Long> = _inferenceMs.asStateFlow()
 
-    private lateinit var eyeGazeModel: EyeGazeModel
-    private lateinit var gazeEstimator: GazeEstimator
-    private lateinit var calibrationEngine: CalibrationEngine
-    private lateinit var cameraManager: CameraManager
-    private lateinit var ttsManager: TtsManager
+    private val _acceleratorName = MutableStateFlow("—")
+    val acceleratorName: StateFlow<String> = _acceleratorName.asStateFlow()
 
-    fun onCameraPermissionGranted(context: Context, lifecycleOwner: LifecycleOwner) {
+    val eyeGazeModel = EyeGazeModel(application)
+    val gazeEstimator = GazeEstimator()
+    val calibEngine = CalibrationEngine()
+    val ttsManager = TtsManager(application)
+
+    private var cameraManager: CameraManager? = null
+
+    val phrases = listOf("Yes", "No", "Help", "Thank you", "I need water", "I'm in pain")
+
+    private val dwellDurationMs = 1500L
+    private val calibrationDwellMs = 2000L
+
+    private var dwellStartMs = 0L
+    private var currentDwellCell = -1
+    private var calibDwellStartMs = 0L
+    private var screenW = 1080f
+    private var screenH = 2400f
+
+    init {
         viewModelScope.launch(Dispatchers.IO) {
-            ttsManager = (context.applicationContext as GazeBoardApplication).ttsManager
-            gazeEstimator = GazeEstimator()
-            calibrationEngine = CalibrationEngine()
-
-            // Load model — try NPU → GPU → CPU; camera starts regardless of outcome
-            eyeGazeModel = EyeGazeModel(context)
             try {
                 eyeGazeModel.load()
-                Log.i(TAG, "EyeGaze model ready on ${eyeGazeModel.acceleratorName}")
+                _acceleratorName.value = eyeGazeModel.acceleratorName
+                ttsManager.init()
+                _appState.value = AppState.NeedsPermission
+                Log.i(TAG, "Model loaded on ${eyeGazeModel.acceleratorName}")
             } catch (e: Exception) {
-                Log.e(TAG, "Model load failed on all accelerators — inference disabled: ${e.message}")
+                _appState.value = AppState.Error("Model load failed: ${e.message}")
+                Log.e(TAG, "Model load failed", e)
             }
-
-            // Camera always starts — pipeline runs; frames are skipped if model not loaded
-            cameraManager = CameraManager(context, eyeGazeModel, gazeEstimator, this@GazeBoardViewModel)
-            // Apply surface provider that the composable may have already set before we were ready
-            pendingSurfaceProvider?.let { cameraManager.preview.setSurfaceProvider(it) }
-            cameraManager.start(lifecycleOwner)
-            Log.i(TAG, "Camera pipeline started")
         }
     }
 
-    /**
-     * Called by CameraManager each frame.
-     *
-     * @param gazeResult null when no face detected; contains pitch/yaw when face is visible
-     * @param inferenceMs NPU inference time for the EyeGaze model
-     * @param accelerator "NPU", "GPU", or "CPU"
-     */
+    fun setScreenSize(w: Float, h: Float) {
+        screenW = w
+        screenH = h
+        calibEngine.setScreenSize(w, h)
+    }
+
+    fun onCameraPermissionGranted(lifecycleOwner: LifecycleOwner) {
+        if (cameraManager != null) return
+
+        startCalibration()
+        cameraManager = CameraManager(
+            getApplication(),
+            eyeGazeModel,
+            gazeEstimator,
+            this
+        ).also { it.start(lifecycleOwner) }
+    }
+
+    fun startCalibration() {
+        val margin = 80f
+        calibDwellStartMs = 0L
+        calibEngine.reset()
+        gazeEstimator.reset()
+        calibEngine.setScreenSize(screenW, screenH)
+        calibEngine.setCalibrationTargets(
+            listOf(
+                CalibrationEngine.CalibPoint(margin, margin),
+                CalibrationEngine.CalibPoint(screenW - margin, margin),
+                CalibrationEngine.CalibPoint(margin, screenH - margin),
+                CalibrationEngine.CalibPoint(screenW - margin, screenH - margin)
+            )
+        )
+        _appState.value = AppState.Calibrating
+        _gazePoint.value = null
+        resetDwell()
+    }
+
     fun onGazeUpdate(
         gazeResult: GazeEstimator.GazeResult?,
         inferenceMs: Long,
         accelerator: String
     ) {
+        _inferenceMs.value = inferenceMs
+        _acceleratorName.value = accelerator
+
         if (gazeResult == null) {
-            _gazeState.update {
-                it.copy(
-                    faceDetected = false,
-                    gazePoint = null,
-                    hoveredCell = null,
-                    dwellProgress = 0f,
-                    inferenceMs = inferenceMs,
-                    accelerator = accelerator
-                )
-            }
+            _gazePoint.value = null
             resetDwell()
             return
         }
 
-        // TODO(Person B): wire calibrationEngine when initialized
-        // val screenPos = calibrationEngine.applyCalibration(gazeResult.pitch, gazeResult.yaw)
-        // Stub: map pitch/yaw directly to screen fraction for integration testing
-        val screenX = ((-gazeResult.yaw / 0.8f + 1f) / 2f * screenWidth).coerceIn(0f, screenWidth)
-        val screenY = ((gazeResult.pitch / 0.5f + 1f) / 2f * screenHeight).coerceIn(0f, screenHeight)
-        val screenPos = PointF(screenX, screenY)
-
-        val gazeOffset = Offset(screenPos.x, screenPos.y)
-
-        // Map screen position to 2×3 grid cell
-        val cellIndex = mapToCell(screenPos)
-
-        _gazeState.update {
-            it.copy(
-                gazePoint = gazeOffset,
-                hoveredCell = cellIndex,
-                inferenceMs = inferenceMs,
-                accelerator = accelerator,
-                faceDetected = true,
-                rawPitch = gazeResult.pitch,
-                rawYaw = gazeResult.yaw
-            )
-        }
-
-        if (_appState.value == AppState.Tracking) {
-            onCellHovered(cellIndex)
+        when (_appState.value) {
+            AppState.Calibrating -> handleCalibrationFrame(gazeResult)
+            AppState.Board -> handleBoardFrame(gazeResult)
+            else -> Unit
         }
     }
 
-    fun onCalibrationPointCaptured(screenPoint: PointF, pitchYaw: PointF) {
-        // TODO(Person B): calibrationEngine.addCalibrationPoint(screenPoint, pitchYaw)
-    }
+    private fun handleCalibrationFrame(gaze: GazeEstimator.GazeResult) {
+        calibEngine.accumulateSample(gaze.pitch, gaze.yaw)
 
-    fun onCalibrationComplete() {
-        // TODO(Person B): calibrationEngine.computeAffineTransform()
-        _appState.value = AppState.Tracking
-        Log.i(TAG, "Calibration complete — entering tracking mode")
-    }
+        if (calibDwellStartMs == 0L) {
+            calibDwellStartMs = SystemClock.elapsedRealtime()
+        }
 
-    // Composable calls this immediately; camera may not be ready yet — store and apply later.
-    private var pendingSurfaceProvider: Preview.SurfaceProvider? = null
+        val elapsed = SystemClock.elapsedRealtime() - calibDwellStartMs
+        _dwellProgress.value = (elapsed / calibrationDwellMs.toFloat()).coerceIn(0f, 1f)
 
-    fun setPreviewSurface(provider: Preview.SurfaceProvider) {
-        pendingSurfaceProvider = provider
-        if (::cameraManager.isInitialized) cameraManager.preview.setSurfaceProvider(provider)
-    }
-
-    fun startCalibration() {
-        // TODO(Person B): calibrationEngine.reset()
-        _appState.value = AppState.Calibrating
-    }
-
-    private fun onCellHovered(cellIndex: Int?) {
-        when {
-            cellIndex == null -> resetDwell()
-            cellIndex != currentDwellCell -> {
-                currentDwellCell = cellIndex
-                dwellStartMs = SystemClock.elapsedRealtime()
-                _gazeState.update { it.copy(dwellProgress = 0f) }
-            }
-            else -> {
-                val elapsed = SystemClock.elapsedRealtime() - dwellStartMs
-                val progress = (elapsed.toFloat() / DWELL_THRESHOLD_MS).coerceIn(0f, 1f)
-                _gazeState.update { it.copy(dwellProgress = progress) }
-                if (elapsed >= DWELL_THRESHOLD_MS) selectCell(cellIndex)
+        if (elapsed >= calibrationDwellMs) {
+            calibDwellStartMs = 0L
+            _dwellProgress.value = 0f
+            val done = calibEngine.commitCurrentTarget()
+            if (done) {
+                _appState.value = AppState.Board
             }
         }
     }
 
-    private fun selectCell(index: Int) {
-        val phrase = phrases.getOrNull(index) ?: return
-        Log.i(TAG, "Cell $index selected: \"$phrase\"")
-        if (::ttsManager.isInitialized) ttsManager.speak(phrase)
-        _appState.value = AppState.Selected(index)
-        resetDwell()
-        viewModelScope.launch {
-            delay(COOLDOWN_MS)
-            if (_appState.value is AppState.Selected) _appState.value = AppState.Tracking
+    private fun handleBoardFrame(gaze: GazeEstimator.GazeResult) {
+        val screenPt = calibEngine.toScreenPoint(gaze.pitch, gaze.yaw) ?: return
+        _gazePoint.value = screenPt
+
+        val gazedCell = hitTestCell(screenPt.first, screenPt.second)
+        if (gazedCell != currentDwellCell) {
+            currentDwellCell = gazedCell
+            dwellStartMs = SystemClock.elapsedRealtime()
+            _dwellingCellIndex.value = gazedCell
+            _dwellProgress.value = 0f
+            return
+        }
+
+        if (gazedCell < 0) return
+
+        val elapsed = SystemClock.elapsedRealtime() - dwellStartMs
+        _dwellProgress.value = (elapsed / dwellDurationMs.toFloat()).coerceIn(0f, 1f)
+
+        if (elapsed >= dwellDurationMs) {
+            val phrase = phrases.getOrNull(gazedCell) ?: return
+            ttsManager.speak(phrase)
+            _lastSpokenPhrase.value = phrase
+            viewModelScope.launch {
+                delay(2000L)
+                if (_lastSpokenPhrase.value == phrase) _lastSpokenPhrase.value = null
+            }
+            resetDwell()
         }
     }
 
-    private fun resetDwell() {
-        currentDwellCell = null
-        dwellStartMs = 0L
-        _gazeState.update { it.copy(dwellProgress = 0f, hoveredCell = null) }
-    }
-
-    /**
-     * Map a screen pixel position to a 2×3 grid cell index (row-major).
-     *   0 | 1 | 2
-     *   --|---|--
-     *   3 | 4 | 5
-     */
-    private fun mapToCell(screenPos: PointF): Int? {
-        val col = (screenPos.x / screenWidth * 3).toInt().coerceIn(0, 2)
-        val row = (screenPos.y / screenHeight * 2).toInt().coerceIn(0, 1)
+    private fun hitTestCell(sx: Float, sy: Float): Int {
+        val col = (sx / (screenW / 3f)).toInt().coerceIn(0, 2)
+        val row = (sy / (screenH / 2f)).toInt().coerceIn(0, 1)
         return row * 3 + col
     }
 
+    private fun resetDwell() {
+        currentDwellCell = -1
+        dwellStartMs = 0L
+        _dwellingCellIndex.value = -1
+        _dwellProgress.value = 0f
+    }
+
     override fun onCleared() {
-        if (::cameraManager.isInitialized) cameraManager.stop()
-        if (::eyeGazeModel.isInitialized) eyeGazeModel.close()
+        cameraManager?.stop()
+        eyeGazeModel.close()
+        ttsManager.shutdown()
         super.onCleared()
     }
 

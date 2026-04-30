@@ -59,7 +59,7 @@
 
 *[Teammate gazes at bottom-center cell. Progress ring fills. Phone speaks: "I need water."]*
 
-> "Watch the cursor — that white circle — that's tracking the iris in real time, directly on the Hexagon NPU. No cloud. Now — 'Help.'"
+> "Watch the cursor — that white circle — that's tracking gaze pitch and yaw in real time, directly on the Hexagon NPU. No cloud. Now — 'Help.'"
 
 *[Teammate gazes at top-right. Phrase spoken.]*
 
@@ -114,13 +114,13 @@ If the live demo fails (crash, NPU not loading, tracking unusable):
 > "Tobii uses proprietary infrared eye tracking hardware — that's why it costs $12,000. We're using the visible-light front camera and on-device ML to approximate the same result. Lower accuracy, but dramatically lower cost. And as front cameras improve, so does GazeBoard."
 
 **Q: What would you add with more time?**
-> "The iris_landmark model from MediaPipe — it's a 64×64 cropped-eye model that gives five-point iris contour instead of just the center, which would improve accuracy significantly. Also a phrase customization UI and a second page of phrases via head tilt."
+> "I would improve the eye crop stage first: more robust face and eye localization, then a larger calibration set that adapts per user. Also a phrase customization UI and a second page of phrases via head tilt."
 
 **Q: Why 6 cells and not a full keyboard?**
 > "AAC research consistently shows that high-frequency phrase boards outperform letter-by-letter communication in real-world use. Six phrases covers 80%+ of urgent needs for a clinical patient. Keyboards require hundreds of selections for a sentence. We optimized for speed and reliability, not vocabulary size."
 
 **Q: Does it work with glasses?**
-> "Yes — we tested it. Thin frames have minimal impact. Thick frames or tinted lenses reduce landmark accuracy, but the EMA smoothing compensates for most noise. We have a distance indicator that prompts the user if the face is too close or too far."
+> "Yes — we tested it. Thin frames have minimal impact. Thick frames or tinted lenses can reduce eye crop quality, but the EMA smoothing compensates for most noise. We have a distance indicator planned to prompt the user if the face is too close or too far."
 
 ---
 

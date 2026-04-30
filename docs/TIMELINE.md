@@ -41,16 +41,16 @@
 ### Person A
 - [ ] Implement `EyeDetector.detectAndCrop()` using Android FaceDetector — test with Logcat output
 - [ ] Wire `CompiledModel.create()` with `Accelerator.NPU` (exact API, not Interpreter)
-- [ ] Implement `bitmapToFloatBuffer()` — 192×192 RGBA to normalized FloatBuffer
-- [ ] Call `model.run()` and print raw FloatArray to Logcat
-- [ ] Verify output has 1434 elements (478 × 3)
+- [ ] Implement eye crop preprocessing — 160×96 grayscale to `FloatBuffer[15360]`
+- [ ] Call `model.run()` and print pitch/yaw to Logcat
+- [ ] Verify outputs include heatmaps, landmarks, and `gaze_pitchyaw`
 - [ ] Log inference time per frame
 
 ### Person B
 - [ ] Set up `ImageAnalysis` with `STRATEGY_KEEP_ONLY_LATEST`, `RGBA_8888` output
 - [ ] Implement `imageProxy.toBitmap()` conversion
-- [ ] Stub call to `FaceLandmarkModel.runInference()` (can use dummy FloatArray)
-- [ ] Implement `extractGaze()` formula (see ARCHITECTURE.md) — test with dummy data
+- [ ] Stub call to `EyeGazeModel.runInference()` (can use dummy `GazeAngles`)
+- [ ] Implement pitch/yaw to screen mapping path (see ARCHITECTURE.md) — test with dummy data
 - [ ] Implement EMA smoothing function
 
 ### Person C
@@ -67,14 +67,14 @@
 
 ### Person A
 - [ ] Confirm NPU execution (log `model.accelerator.name`)
-- [ ] Add null-check: return null if face confidence below threshold
-- [ ] Implement landmark extraction helper: `fun lm(idx: Int): PointF`
-- [ ] Verify landmark 468 x-value shifts left/right as face turns
-- [ ] Hand off final `FaceLandmarkModel.kt` API to Person B
+- [ ] Add null-check: return null if `FaceDetector` cannot produce a valid eye crop
+- [ ] Allocate and verify all EyeGaze output buffers
+- [ ] Verify pitch changes when looking up/down and yaw changes when looking left/right
+- [ ] Hand off final `EyeGazeModel.kt` API to Person B
 
 ### Person B
 - [ ] Integrate Person A's actual `runInference()` call into CameraX pipeline
-- [ ] Implement `isBlinking()` — EAR < 0.2 threshold
+- [ ] Integrate smoothed pitch/yaw into calibration capture
 - [ ] Implement `CalibrationEngine.kt`:
   - `addCalibrationPoint(screenPoint, gazePoint)`
   - `computeAffineTransform()` — 4-point least squares
@@ -95,9 +95,9 @@
 **This is the most critical milestone of the 24 hours.**
 
 ### Integration Test Sequence
-1. Person A hands `FaceLandmarkModel.kt` to Person B
+1. Person A hands `EyeGazeModel.kt` to Person B
 2. Person B integrates into live CameraX pipeline
-3. Verify end-to-end: **move face → landmark changes → gaze point moves → cursor moves on screen**
+3. Verify end-to-end: **move eyes → pitch/yaw changes → gaze point moves → cursor moves on screen**
 4. Person C connects ViewModel StateFlow to all UI components
 5. Full flow test: launch → calibration → board → look at cell → dwell → TTS speaks
 
@@ -105,7 +105,7 @@
 | Test | Pass | Fail |
 |------|------|------|
 | NPU inference active | badge shows "NPU" | badge shows "CPU" → debug |
-| Landmarks tracking | cursor moves with eyes | cursor frozen → check output parsing |
+| Pitch/yaw tracking | cursor moves with eyes | cursor frozen -> check EyeGaze output parsing |
 | Dwell selection | TTS fires after 1.5s gaze | never fires → check timer |
 | Calibration | 4 points captured | crashes on corner capture |
 
@@ -120,7 +120,6 @@
 - [ ] Verify calibration actually improves cell selection accuracy vs uncalibrated
 - [ ] Add "face not detected" overlay when face leaves frame
 - [ ] Add distance indicator ("move closer" / "move back") based on IPD
-- [ ] Add blink detection visual indicator (optional but shows sophistication)
 - [ ] NPU profiler badge: real inference time, real accelerator name
 
 ---
@@ -156,7 +155,7 @@
 ## Hours 12–16: Bug Fixes & Edge Cases
 
 - [ ] Face not detected → show overlay, resume tracking when face returns
-- [ ] Eyes closed (both) → pause dwell timer, don't select
+- [ ] No face / invalid eye crop -> pause dwell timer, don't select
 - [ ] Face too close/far → show distance indicator, graceful degradation
 - [ ] Screen rotation: lock to portrait
 - [ ] Memory leak audit: ImageProxy always closed, model not leaking
@@ -170,7 +169,7 @@
 
 ### Person C (lead), assisted by all
 - [ ] Complete `README.md` — all sections, setup instructions work from scratch
-- [ ] Add code comments to `FaceLandmarkModel.kt`, `GazeEstimator.kt` (highest-value files)
+- [ ] Add code comments to `EyeGazeModel.kt`, `EyeDetector.kt`, and `GazeEstimator.kt` (highest-value files)
 - [ ] Finalize `docs/DEMO-SCRIPT.md` — each team member reads through once
 - [ ] Draft Devpost submission text (title, description, video placeholder)
 - [ ] Prepare NPU latency screenshot for presentation

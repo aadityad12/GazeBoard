@@ -19,7 +19,7 @@ Every Samsung Galaxy S25 Ultra owner already has a front-facing camera, a powerf
 
 **GazeBoard** is a free, fully on-device, eye-gaze-controlled communication board that runs on a consumer Android phone. No internet. No cloud. No $15,000 device. Just a phone and your eyes.
 
-The user looks at one of 6 large phrase cells for approximately 1.5 seconds. The app detects their gaze direction using MediaPipe FaceMesh iris landmarks processed on the Hexagon NPU via LiteRT's CompiledModel API. When the dwell threshold is reached, the phrase is spoken aloud via Android TTS.
+The user looks at one of 6 large phrase cells for approximately 1.5 seconds. The app detects the face with Android `FaceDetector`, crops the eye region, and runs `eyegaze.tflite` on the Hexagon NPU via LiteRT's `CompiledModel` API. The model outputs gaze pitch/yaw angles, which are calibrated to screen coordinates. When the dwell threshold is reached, the phrase is spoken aloud via Android TTS.
 
 **This is not a keyboard. It is not a sentence builder.** It is the fastest possible communication primitive: a small vocabulary of high-frequency phrases, selectable by gaze alone, on hardware a family can already afford.
 
@@ -81,7 +81,7 @@ Total time from launch to first utterance: **< 30 seconds** (including calibrati
 
 | Feature | Priority | Description |
 |---------|----------|-------------|
-| iris_landmark.tflite | P1 stretch | 64×64 cropped eye region, 5-point iris contour — higher accuracy than FaceMesh iris indices |
+| Improved eye crop tuning | P1 stretch | Better crop heuristics or a stronger eye detector if Android `FaceDetector` is unreliable |
 | Head tilt page scroll | P2 stretch | Tilt head left/right to reveal second page of 6 phrases |
 | Phrase customization UI | P2 stretch | Long-press a cell to edit its phrase text |
 | Blink-to-select mode | P3 stretch | Double-blink (EAR < 0.2 twice within 0.5s) as alternative to dwell |
@@ -129,7 +129,7 @@ The 6 default phrases are selected for maximum real-world frequency in clinical 
 ## Constraints
 
 - **Hardware:** Samsung Galaxy S25 Ultra only (Snapdragon 8 Elite, SM8750)
-- **Model runtime:** LiteRT 2.1.0, `CompiledModel` API, `Accelerator.NPU`
+- **Model runtime:** LiteRT `CompiledModel` API, `Accelerator.NPU` preferred with visible GPU/CPU fallback
 - **Connectivity:** None — must work in airplane mode
 - **Install:** Single APK, no setup wizard, no account creation
 - **Time:** 24-hour build window (April 30–May 1, 2026)

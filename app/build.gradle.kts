@@ -56,6 +56,10 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
+    // ML Kit face detection — replaces unreliable android.media.FaceDetector
+    implementation("com.google.mlkit:face-detection:16.1.7")
+    implementation("com.google.android.gms:play-services-tasks:18.1.0")
+
     // Jetpack core
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")

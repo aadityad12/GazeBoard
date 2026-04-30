@@ -22,7 +22,7 @@
 **What judges check:** Is `CompiledModel` API used? NOT the old `Interpreter` class?
 
 **How we prove it:**
-- `FaceLandmarkModel.kt` uses `CompiledModel.create()` — visible in code
+- `EyeGazeModel.kt` uses `CompiledModel.create()` — visible in code
 - `Accelerator.NPU` is passed explicitly
 - Demo narration says "LiteRT CompiledModel API" and "Hexagon NPU" by name
 - NPU badge shows "NPU" in green during demo
@@ -51,16 +51,16 @@
 - "We use `STRATEGY_KEEP_ONLY_LATEST` backpressure so we never queue frames or waste memory"
 - "LiteRT caches the NPU-compiled model after first launch — we pre-warmed it before this demo"
 
-**Evidence:** Show in README the AOT compilation command via Qualcomm AI Hub.
+**Evidence:** Show in README that first launch warms LiteRT's JIT cache for `eyegaze.tflite`.
 
 ### Optimization (evidence of optimization for target environment)
 **What to show:** LiteRT's NPU-targeted JIT compilation via CompiledModel API is the optimization story.
 
 **Evidence to prepare:**
-- `FaceLandmarkModel.kt` uses `Accelerator.NPU, Accelerator.GPU` — visible in code, demonstrates we target the NPU specifically
+- `EyeGazeModel.kt` uses `Accelerator.NPU, Accelerator.GPU` — visible in code, demonstrates we target the NPU specifically
 - NPU badge in UI shows real-time inference time — visual proof of optimization
 - `STRATEGY_KEEP_ONLY_LATEST` backpressure in CameraManager — shows we optimized the pipeline to never queue frames
-- In code comments, note why 192×192 input size (model requirement) and why RGBA vs RGB (hardware alignment)
+- In code comments, note why the EyeGaze input is 160x96 grayscale and why CameraX uses RGBA frames before eye cropping
 - Mention that `CompiledModel` API caches the NPU-compiled model after first launch — "we warmed the cache before this demo"
 
 ---
@@ -127,12 +127,12 @@
 - Let the app speak for itself — TTS saying "I need water" is more compelling than any slide
 
 ### Code Quality
-**Target:** Any judge who opens `FaceLandmarkModel.kt` or `GazeEstimator.kt` should immediately understand what it does.
+**Target:** Any judge who opens `EyeGazeModel.kt`, `EyeDetector.kt`, or `GazeEstimator.kt` should immediately understand what it does.
 
 **Standards to maintain:**
 - No dead code or commented-out blocks
 - Descriptive variable names (`irisLeftCenter` not `lm468`)
-- Landmark index references commented with human description (`// 468: left iris center`)
+- Tensor and pitch/yaw conventions commented with human descriptions
 - Function bodies under 30 lines — extract helpers
 - No force-unwraps (`!!`) in inference-critical paths
 

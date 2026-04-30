@@ -2,6 +2,7 @@ package com.gazeboard.camera
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.util.Log
 import android.util.Size
 import android.view.Surface
@@ -96,10 +97,17 @@ class CameraManager(
      */
     private fun processFrame(imageProxy: ImageProxy) {
         try {
-            // toBitmap() returns ARGB_8888 when output format is RGBA_8888
-            val bitmap: Bitmap = imageProxy.toBitmap()
+            val raw: Bitmap = imageProxy.toBitmap()
 
-            // Two-stage pipeline: EyeDetector (CPU) → EyeGazeModel (NPU)
+            // Rotate to upright orientation — sensor delivers frames rotated relative to display
+            val rotation = imageProxy.imageInfo.rotationDegrees
+            val bitmap = if (rotation != 0) {
+                val m = Matrix().apply { postRotate(rotation.toFloat()) }
+                Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, m, true)
+                    .also { raw.recycle() }
+            } else raw
+
+            // Two-stage pipeline: EyeDetector (ML Kit) → EyeGazeModel (NPU/CPU)
             val gazeResult = gazeEstimator.estimate(bitmap, eyeGazeModel)
 
             bitmap.recycle()
