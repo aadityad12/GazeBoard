@@ -52,7 +52,7 @@ fun BoardScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF070D14))
+            .background(Color(0xFF050810))
     ) {
         // 2×3 phrase grid — takes full screen
         Column(

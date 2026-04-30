@@ -42,7 +42,7 @@ data class GazeState(
 
 class GazeBoardViewModel : ViewModel() {
 
-    private val _appState = MutableStateFlow<AppState>(AppState.Calibrating)
+    private val _appState = MutableStateFlow<AppState>(AppState.Tracking)
     val appState: StateFlow<AppState> = _appState.asStateFlow()
 
     private val _gazeState = MutableStateFlow(GazeState())

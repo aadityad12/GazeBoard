@@ -78,18 +78,16 @@ fun CalibrationScreen(
         label = "calibration_dwell"
     )
 
-    // TODO(Person C): Replace this timed stub with actual gaze-dwell detection.
-    // When gazeState.gazePoint is near the current corner target AND dwellProgress reaches 1.0,
-    // capture the point and advance.
-    LaunchedEffect(currentPoint) {
+    // Auto-advance after dwell time. Key on both currentPoint AND screenSize so the effect
+    // re-runs once the layout is measured (fixes stale Offset.Zero capture bug).
+    LaunchedEffect(currentPoint, screenSize) {
+        if (screenSize.first == 0f) return@LaunchedEffect  // wait for layout
         captureDone = false
         delay(CALIBRATION_DWELL_MS + TRANSITION_DELAY_MS)
 
         if (!captureDone && corners.isNotEmpty() && corners[currentPoint] != Offset.Zero) {
             val corner = corners[currentPoint]
             val screenPt = PointF(corner.x, corner.y)
-                    // Pass current pitch/yaw from GazeState as the gaze observation at this corner.
-            // x = pitch, y = yaw (matches CalibrationEngine.addCalibrationPoint convention)
             val pitchYaw = PointF(gazeState.rawPitch, gazeState.rawYaw)
 
             onCalibrationPointCaptured(screenPt, pitchYaw)

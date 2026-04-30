@@ -50,14 +50,14 @@ fun PhraseCell(
 
     val backgroundColor = when {
         isSelected -> Color(0xFF00C853)               // green — selected
-        isHovered  -> Color(0xFF1E3A5F)               // dark blue — hovered
-        else       -> Color(0xFF0D1B2A)               // very dark — idle
+        isHovered  -> Color(0xFF1565C0)               // bright blue — hovered
+        else       -> Color(0xFF1A2744)               // visible dark blue — idle
     }
 
     val borderColor = when {
-        isSelected -> Color(0xFF00C853)
-        isHovered  -> Color(0xFF4FC3F7)               // light blue border when hovered
-        else       -> Color(0xFF1E3A5F)
+        isSelected -> Color(0xFF69F0AE)
+        isHovered  -> Color(0xFF82CAFF)               // bright border when hovered
+        else       -> Color(0xFF3D6B9E)               // visible border — idle
     }
 
     Box(
