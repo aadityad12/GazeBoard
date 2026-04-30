@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Eye outline -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,38 C34,38 18,54 18,54 C18,54 34,70 54,70 C74,70 90,54 90,54 C90,54 74,38 54,38 Z" />
+    <!-- Iris (circle via path) -->
+    <path
+        android:fillColor="#1A237E"
+        android:pathData="M54,44 A10,10 0 1,0 54.001,44 Z" />
+    <!-- Specular highlight (small circle via path) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M57,47 A3,3 0 1,0 57.001,47 Z" />
+</vector>

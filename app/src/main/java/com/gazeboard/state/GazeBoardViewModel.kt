@@ -5,14 +5,16 @@ import android.graphics.PointF
 import android.os.SystemClock
 import android.util.Log
 import androidx.compose.ui.geometry.Offset
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.gazeboard.GazeBoardApplication
 import com.gazeboard.audio.TtsManager
 import com.gazeboard.calibration.CalibrationEngine
 import com.gazeboard.camera.CameraManager
-import com.gazeboard.ml.EyeDetector
 import com.gazeboard.ml.EyeGazeModel
 import com.gazeboard.ml.GazeEstimator
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,6 +35,7 @@ data class GazeState(
     val inferenceMs: Long = 0L,
     val accelerator: String = "—",
     val faceDetected: Boolean = false,
+    val distanceWarning: String? = null, // non-null when face is too close/far
     val rawPitch: Float = 0f,            // for debug overlay / calibration
     val rawYaw: Float = 0f
 )
@@ -64,22 +67,25 @@ class GazeBoardViewModel : ViewModel() {
     private lateinit var cameraManager: CameraManager
     private lateinit var ttsManager: TtsManager
 
-    fun onCameraPermissionGranted(context: Context) {
-        viewModelScope.launch {
-            // TODO(Person A): Initialize and load the EyeGaze model on a background thread
-            // eyeGazeModel = EyeGazeModel(context)
-            // eyeGazeModel.load()   // ~2-5s first launch for JIT NPU compilation
+    fun onCameraPermissionGranted(context: Context, lifecycleOwner: LifecycleOwner) {
+        viewModelScope.launch(Dispatchers.IO) {
+            ttsManager = (context.applicationContext as GazeBoardApplication).ttsManager
+            gazeEstimator = GazeEstimator()
+            calibrationEngine = CalibrationEngine()
 
-            // TODO(Person B): Initialize gaze pipeline
-            // gazeEstimator = GazeEstimator()
-            // calibrationEngine = CalibrationEngine()
-            // cameraManager = CameraManager(context, eyeGazeModel, gazeEstimator, this@GazeBoardViewModel)
-            // cameraManager.start(lifecycleOwner)  // need LifecycleOwner from Activity
+            // Load model — try NPU → GPU → CPU; camera starts regardless of outcome
+            eyeGazeModel = EyeGazeModel(context)
+            try {
+                eyeGazeModel.load()
+                Log.i(TAG, "EyeGaze model ready on ${eyeGazeModel.acceleratorName}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Model load failed on all accelerators — inference disabled: ${e.message}")
+            }
 
-            // TODO(Person C): Get TtsManager from Application singleton
-            // ttsManager = (context.applicationContext as GazeBoardApplication).ttsManager
-
-            Log.i(TAG, "Camera permission granted — pipeline initialization pending")
+            // Camera always starts — pipeline runs; frames are skipped if model not loaded
+            cameraManager = CameraManager(context, eyeGazeModel, gazeEstimator, this@GazeBoardViewModel)
+            cameraManager.start(lifecycleOwner)
+            Log.i(TAG, "Camera pipeline started")
         }
     }
 
@@ -174,7 +180,7 @@ class GazeBoardViewModel : ViewModel() {
     private fun selectCell(index: Int) {
         val phrase = phrases.getOrNull(index) ?: return
         Log.i(TAG, "Cell $index selected: \"$phrase\"")
-        // TODO(Person C): ttsManager.speak(phrase)
+        if (::ttsManager.isInitialized) ttsManager.speak(phrase)
         _appState.value = AppState.Selected(index)
         resetDwell()
         viewModelScope.launch {
@@ -202,8 +208,8 @@ class GazeBoardViewModel : ViewModel() {
     }
 
     override fun onCleared() {
-        // TODO: cameraManager.stop()
-        // TODO: eyeGazeModel.close()
+        if (::cameraManager.isInitialized) cameraManager.stop()
+        if (::eyeGazeModel.isInitialized) eyeGazeModel.close()
         super.onCleared()
     }
 

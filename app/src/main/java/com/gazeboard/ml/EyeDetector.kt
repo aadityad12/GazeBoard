@@ -40,8 +40,10 @@ class EyeDetector {
         // Padding around the detected eye region to include eyelids and brow
         private const val EYE_CROP_PADDING_FACTOR = 0.5f
 
-        // Minimum eye distance (as fraction of frame width) to filter tiny/distant faces
-        private const val MIN_EYE_DISTANCE_FRACTION = 0.05f
+        // Minimum eye distance (as fraction of frame width) to filter spurious detections.
+        // S25 Ultra front camera delivers ~1088px wide frames; a seated user at ~50cm
+        // gives eye distance ~35-40px → ratio ~0.034. Keep threshold just below that.
+        private const val MIN_EYE_DISTANCE_FRACTION = 0.02f
     }
 
     // Reuse FaceDetector instances to avoid GC pressure per frame

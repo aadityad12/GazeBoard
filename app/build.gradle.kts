@@ -33,6 +33,7 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        freeCompilerArgs += "-Xskip-metadata-version-check"
     }
 
     buildFeatures {
@@ -64,11 +65,10 @@ dependencies {
 
     // LiteRT — CompiledModel API (NOT the old Interpreter)
     // This is the pass/fail gate for the hackathon — do not change to tflite-task-vision
-    implementation("com.google.ai.edge.litert:litert:2.1.0")
-    implementation("com.google.ai.edge.litert:litert-api:2.1.0")
+    implementation("com.google.ai.edge.litert:litert:2.1.4")
 
-    // LiteRT Qualcomm NPU backend — enables Accelerator.NPU on SM8750
-    implementation("com.google.ai.edge.litert:litert-qualcomm:2.1.0")
+    // LiteRT Qualcomm QNN delegate — enables Accelerator.NPU on SM8750 (Hexagon)
+    implementation("com.qualcomm.qti:qnn-litert-delegate:2.34.0")
 
     // CameraX
     val cameraxVersion = "1.3.4"
@@ -83,4 +83,10 @@ dependencies {
     // Test
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
+}
+
+// KGP 2.0 no longer auto-registers this task for kotlin-android subprojects,
+// but Android Studio's Tooling API still requests it during sync.
+if (tasks.findByName("prepareKotlinBuildScriptModel") == null) {
+    tasks.register("prepareKotlinBuildScriptModel")
 }

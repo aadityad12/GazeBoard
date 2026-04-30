@@ -34,7 +34,7 @@ class MainActivity : ComponentActivity() {
                 val permissionLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestPermission()
                 ) { granted ->
-                    if (granted) viewModel.onCameraPermissionGranted(this)
+                    if (granted) viewModel.onCameraPermissionGranted(this@MainActivity, this@MainActivity)
                 }
 
                 LaunchedEffect(Unit) {
@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
                             this@MainActivity, Manifest.permission.CAMERA
                         ) == PackageManager.PERMISSION_GRANTED
                     ) {
-                        viewModel.onCameraPermissionGranted(this@MainActivity)
+                        viewModel.onCameraPermissionGranted(this@MainActivity, this@MainActivity)
                     } else {
                         permissionLauncher.launch(Manifest.permission.CAMERA)
                     }
