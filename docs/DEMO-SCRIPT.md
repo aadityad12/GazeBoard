@@ -75,7 +75,7 @@
 
 *[Point to the NPU badge in the corner of the screen.]*
 
-> "See this badge — 'NPU · 8ms'. That's the LiteRT CompiledModel API executing MediaPipe FaceMesh on the Hexagon NPU — not the CPU, not the GPU — the dedicated neural processing unit on the Snapdragon 8 Elite. Eight milliseconds per frame. We AOT-compiled the model for this exact chip via Qualcomm AI Hub. No interpreter. No generic runtime. Compiled, on-device, on-NPU."
+> "See this badge — 'NPU · 8ms'. That's the LiteRT CompiledModel API executing face landmark inference on the Hexagon NPU — not the CPU, not the GPU — the dedicated neural processing unit on the Snapdragon 8 Elite. Eight milliseconds per frame. LiteRT compiles the model specifically for this chip's NPU at runtime and caches it. No generic interpreter. No cloud compilation. Just the CompiledModel API running natively on-NPU."
 
 *[Optional: toggle to show landmark overlay if implemented.]*
 

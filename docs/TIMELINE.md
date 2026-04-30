@@ -13,12 +13,12 @@
 - Each person has their workspace ready
 
 ### Person A
-- [ ] Clone `https://github.com/google-ai-edge/litert-samples/tree/main/compiled_model_api/image_segmentation/kotlin_npu`
-- [ ] Verify it builds without errors (`./gradlew assembleDebug`)
-- [ ] Install on S25 Ultra, confirm it runs and shows camera feed
-- [ ] Run `scripts/export_models.py` to export `face_landmark` for SM8750
-- [ ] Push compiled model to device (`scripts/push_to_device.sh`)
-- [ ] Confirm model file is accessible from assets
+- [ ] **Ask Qualcomm/Google engineers on-site** for a face landmark .tflite that works with CompiledModel API on SM8750 — this is the fastest path
+- [ ] If no on-site model: run `bash scripts/download_models.sh` to auto-download
+- [ ] Clone `https://github.com/google-ai-edge/litert-samples/tree/main/compiled_model_api/image_segmentation/kotlin_npu` as CompiledModel reference
+- [ ] Verify GazeBoard builds without errors (`./gradlew assembleDebug`)
+- [ ] Run `bash scripts/install_and_run.sh` — first launch warms LiteRT JIT cache for NPU
+- [ ] Watch Logcat for `[GazeBoard] Confirmed NPU execution` to verify NPU is active
 
 ### Person B
 - [ ] Set up new Android project (or fork from Person A's base)
@@ -39,7 +39,7 @@
 ## Hours 1–3: Core Inference & UI (PARALLEL)
 
 ### Person A
-- [ ] Replace litert-samples model with `face_landmark_compiled.tflite`
+- [ ] Place `face_landmark.tflite` in `app/src/main/assets/` (from on-site engineers or download script)
 - [ ] Wire `CompiledModel.create()` with `Accelerator.NPU` (exact API, not Interpreter)
 - [ ] Implement `bitmapToFloatBuffer()` — 192×192 RGBA to normalized FloatBuffer
 - [ ] Call `model.run()` and print raw FloatArray to Logcat

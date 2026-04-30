@@ -52,7 +52,7 @@ Front Camera (640×480 @ 15 FPS)
 
 **Inference latency:** ~8ms on NPU (Hexagon DSP, SM8750)
 **Frame rate:** 15+ FPS continuous
-**Model:** MediaPipe FaceMesh, AOT-compiled for SM8750 via Qualcomm AI Hub
+**Model:** Face landmark .tflite — LiteRT CompiledModel API JIT-compiles for Hexagon NPU on first launch
 
 ---
 
@@ -78,48 +78,31 @@ Front Camera (640×480 @ 15 FPS)
 
 - Android Studio Hedgehog or newer
 - JDK 17+
-- Python 3.9+ (for model export)
 - ADB (Android SDK Platform Tools)
 - Samsung Galaxy S25 Ultra with USB debugging enabled
-- Qualcomm AI Hub account (free): `https://aihub.qualcomm.com`
 
 ### Step 1: Clone the repository
 
 ```bash
-git clone https://github.com/[YOUR_ORG]/GazeBoard.git
+git clone https://github.com/aadityad12/GazeBoard.git
 cd GazeBoard
 ```
 
-### Step 2: Acquire the compiled model
+### Step 2: Acquire the model
 
 ```bash
-# Authenticate with Qualcomm AI Hub first:
-pip install qai-hub
-qai-hub configure --api-token YOUR_TOKEN_HERE
-
-# Export and verify the model:
-python scripts/export_models.py
+bash scripts/download_models.sh
 ```
 
-This script:
-1. Installs `qai-hub-models`
-2. Exports MediaPipe FaceMesh compiled for SM8750
-3. Copies the model to `app/src/main/assets/`
-4. Verifies tensor shapes (expects 478×3 output)
+This tries (in order): LiteRT HuggingFace community models → Qualcomm HuggingFace models → stock MediaPipe FaceMesh. See `models/README.md` for all options including the fastest path (ask on-site engineers at the hackathon).
 
-See `models/README.md` for manual/fallback instructions.
-
-### Step 3: Build and install
+### Step 3: Build, install, and warm the JIT cache
 
 ```bash
-# Build debug APK
-./gradlew :app:assembleDebug
-
-# Install on connected S25 Ultra
-adb install app/build/outputs/apk/debug/app-debug.apk
+bash scripts/install_and_run.sh
 ```
 
-OR open the project in Android Studio and click Run.
+This builds the APK, installs it, and launches the app. **The first launch JIT-compiles the model for the Hexagon NPU and caches it** (~2–5s one-time delay). All subsequent launches use the cached compiled model. Run this once before the demo.
 
 ### Step 4: Verify NPU execution
 
@@ -127,9 +110,9 @@ OR open the project in Android Studio and click Run.
 adb logcat | grep GazeBoard
 ```
 
-Expected output: `[GazeBoard] Confirmed NPU execution via CompiledModel API`
+Expected: `[GazeBoard] Confirmed NPU execution via CompiledModel API`
 
-If you see `WARNING: Running on CPU`, the model AOT compilation may not have succeeded. See `models/README.md` for troubleshooting.
+If you see `WARNING: Running on GPU` on first launch — the JIT cache is still warming. Relaunch the app; it should show NPU.
 
 ---
 
@@ -169,21 +152,21 @@ If you see `WARNING: Running on CPU`, the model AOT compilation may not have suc
 
 ## LiteRT CompiledModel API
 
-GazeBoard uses the **LiteRT CompiledModel API** (not the deprecated Interpreter API) with `Accelerator.NPU`:
+GazeBoard uses the **LiteRT CompiledModel API** (not the deprecated Interpreter API) with `Accelerator.NPU, Accelerator.GPU`:
 
 ```kotlin
 val options = CompiledModel.Options.Builder()
-    .setAccelerator(Accelerator.NPU)
+    .setAccelerator(Accelerator.NPU, Accelerator.GPU)
     .build()
 
 val model = CompiledModel.create(
     context.assets,
-    "face_landmark_compiled.tflite",
+    "face_landmark.tflite",
     options
 )
 ```
 
-The model is AOT-compiled for the Snapdragon 8 Elite's Hexagon NPU via Qualcomm AI Hub, achieving ~8ms inference at runtime with no JIT overhead.
+LiteRT JIT-compiles the model for the Snapdragon 8 Elite's Hexagon NPU on first launch and caches the result. No AOT compilation or cloud tooling required — just the CompiledModel API and a standard .tflite model.
 
 ---
 

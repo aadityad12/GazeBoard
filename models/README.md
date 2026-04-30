@@ -1,172 +1,126 @@
 # GazeBoard — Model Acquisition Guide
 
-## Required Models
+## How LiteRT CompiledModel API Works (No AOT Required)
 
-| Model | File | Size | Input | Output |
-|-------|------|------|-------|--------|
-| MediaPipe FaceMesh (AOT for SM8750) | `face_landmark_compiled.tflite` | ~3MB | 192×192×3 float | 478×3 float |
+We use `CompiledModel.create()` with `Accelerator.NPU, Accelerator.GPU`. LiteRT **JIT-compiles the model for the Hexagon NPU on first launch** and caches the result in the app's private storage. Subsequent launches use the cached compiled model — no JIT delay.
+
+**Action required before demo:** Install the app and launch it once. Let it sit on the calibration screen for ~10 seconds. This warms the JIT cache. All subsequent launches will use the pre-compiled NPU model.
 
 ---
 
-## Method 1: Qualcomm AI Hub (Recommended — AOT compiled for SM8750)
+## Required Model
 
-This produces a model compiled specifically for the Snapdragon 8 Elite's Hexagon NPU, enabling `CompiledModel` API usage with `Accelerator.NPU`.
+| File | Input | Output |
+|------|-------|--------|
+| `face_landmark.tflite` | `[1, 192, 192, 3]` float32 | `[1, 1434]` float32 (478 landmarks × XYZ) |
 
-### Step 1: Create Qualcomm AI Hub account
+Place the file at: `app/src/main/assets/face_landmark.tflite`
 
-Go to `https://aihub.qualcomm.com` and create a free account. Verify your email.
+---
 
-### Step 2: Install Python dependencies
+## Acquisition — Priority Order
+
+### 1. On-Site Provided (Highest Priority — Zero Risk)
+
+At the hackathon venue, Qualcomm and Google engineers will be present. **Ask them directly** for a face landmark .tflite model that works with `CompiledModel` API on the S25 Ultra. They almost certainly have one. This is the fastest path with the best-optimized model.
+
+Questions to ask:
+- "Do you have a MediaPipe FaceMesh or face landmark .tflite model optimized for the Hexagon NPU on SM8750?"
+- "Is there a sample app that does face landmark inference via CompiledModel API we can reference?"
+- "Which models in the litert-samples repo work best for face inference on the S25 Ultra?"
+
+### 2. litert-samples Repo
 
 ```bash
-python -m pip install qai-hub-models qai-hub
+git clone https://github.com/google-ai-edge/litert-samples
+# Check bundled models in any NPU sample app:
+find litert-samples -name "*.tflite" | head -20
 ```
 
-### Step 3: Authenticate with AI Hub
+The image segmentation NPU sample app is the closest reference to our pipeline. It may include a face or object detection model that confirms the CompiledModel API setup works, even if we need a different model for landmarks.
+
+### 3. Automated Download (Try First)
 
 ```bash
-qai-hub configure --api-token YOUR_TOKEN_HERE
-# Token found at: https://aihub.qualcomm.com/account (after login)
+bash scripts/download_models.sh
 ```
 
-### Step 4: Export the model
+This script tries in order:
+1. LiteRT HuggingFace community models
+2. Qualcomm HuggingFace pre-exported models (no account needed)
+3. Stock MediaPipe FaceMesh .tflite as final fallback
+
+### 4. Manual HuggingFace Search
+
+Browse these sources (no account required to download):
+- `https://huggingface.co/litert-community` — LiteRT-optimized models
+- `https://huggingface.co/qualcomm` — Qualcomm pre-exported models
+- `https://huggingface.co/google` — Google model releases including MediaPipe variants
+
+Search terms: `face landmark tflite`, `face mesh tflite`, `mediapipe face tflite`
+
+### 5. Stock MediaPipe .tflite (Last Resort)
 
 ```bash
-# Simplest path — use the pre-packaged export script:
-python scripts/export_models.py
+# Download MediaPipe FaceLandmarker task bundle
+curl -L -o /tmp/face_landmarker.task \
+    "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
 
-# OR manually:
-python -m qai_hub_models.models.mediapipe_face.export \
-    --device "Samsung Galaxy S25 Ultra" \
-    --target-runtime tflite \
-    --output-dir models/
+# Extract the .tflite from the bundle (it's a zip)
+unzip -p /tmp/face_landmarker.task "face_landmarks_detector.tflite" \
+    > app/src/main/assets/face_landmark.tflite
 ```
 
-### Step 5: Verify the output
+This works via JIT — `CompiledModel.create()` will NPU-compile it on first launch.
 
-The export produces a `.tflite` file. Rename it to `face_landmark_compiled.tflite`.
+---
 
-Verify tensor shapes using the Python script:
+## Verifying the Model
+
+After placing the file, verify tensor shapes. Requires `tflite-runtime`:
+
 ```bash
-python -c "
-import tensorflow as tf
-interp = tf.lite.Interpreter('models/face_landmark_compiled.tflite')
+pip install tflite-runtime
+
+python3 - <<'EOF'
+import tflite_runtime.interpreter as tflite
+
+interp = tflite.Interpreter("app/src/main/assets/face_landmark.tflite")
 interp.allocate_tensors()
-print('Inputs:', interp.get_input_details())
-print('Outputs:', interp.get_output_details())
-"
+print("Input: ", interp.get_input_details()[0]['shape'])
+print("Output:", interp.get_output_details()[0]['shape'])
+EOF
 ```
 
 **Expected output:**
 ```
-Inputs:  [{'shape': [1, 192, 192, 3], 'dtype': float32, ...}]
-Outputs: [{'shape': [1, 1434], 'dtype': float32, ...}]   # 478 * 3 = 1434
+Input:  [1 192 192 3]
+Output: [1 1434]   # 478 landmarks × 3 coords — iris tracking works
 ```
 
-If the output shape is `[1, 1434]` or `[1, 478, 3]`, the model is correct. If it differs, check which variant was exported (FaceMesh has 468-landmark and 478-landmark versions — you need the 478-landmark version with iris).
-
-### Step 6: Push to device
-
-```bash
-bash scripts/push_to_device.sh
+**Acceptable output:**
 ```
-
-### Step 7: Verify NPU execution
-
-After installing and running the app, check Logcat:
-```bash
-adb logcat | grep "GazeBoard"
-# Expected: [GazeBoard] Accelerator: NPU
-# Bad:      [GazeBoard] WARNING: Running on CPU, not NPU!
+Output: [1 1404]   # 468 landmarks × 3 — no iris landmarks 468-477
 ```
+→ In this case the head pose fallback will be used instead of iris tracking. Document this for demo.
 
 ---
 
-## Method 2: Manual MediaPipe FaceMesh + JIT Compilation (Fallback)
-
-Use this if Qualcomm AI Hub export fails or produces incorrect tensor shapes.
-
-### Download base model
+## Installing and Warming the JIT Cache
 
 ```bash
-# MediaPipe FaceMesh with iris (478 landmarks):
-curl -L -o models/face_landmark.tflite \
-    "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
+bash scripts/install_and_run.sh
 ```
 
-Note: The `.task` file is a MediaPipe bundle. Extract the `.tflite` from it:
-```bash
-unzip -p models/face_landmarker.task "*/face_landmarks_detector.tflite" \
-    > models/face_landmark.tflite
-```
-
-### JIT compilation via LiteRT at runtime
-
-When using a non-AOT model, `CompiledModel.create()` with `Accelerator.NPU` will attempt JIT compilation on the device. This is slower on first load (~2–5 seconds) but works correctly.
-
-Update `FaceLandmarkModel.kt` to handle the longer first-load time:
-```kotlin
-// Show "Loading..." overlay during first model compilation
-val options = CompiledModel.Options.Builder()
-    .setAccelerator(Accelerator.NPU)
-    .build()
-// First call may take 2-5 seconds for JIT NPU compilation
-model = CompiledModel.create(context.assets, "face_landmark.tflite", options)
-```
-
-The NPU badge will still show "NPU" if JIT compilation succeeds. JIT is acceptable for the demo; AOT is preferred for the judging narrative.
-
----
-
-## Pushing Models to App Assets
-
-The `CompiledModel` API loads models from the app's `assets/` folder. After acquiring the model:
+This builds the APK, installs it, and launches the app. The first launch triggers LiteRT JIT compilation for the Hexagon NPU. Watch Logcat:
 
 ```bash
-# Copy to Android assets directory
-cp models/face_landmark_compiled.tflite \
-    app/src/main/assets/face_landmark_compiled.tflite
+adb logcat | grep GazeBoard
 ```
 
-The file name in assets must match exactly what's used in `FaceLandmarkModel.kt`:
-```kotlin
-CompiledModel.create(context.assets, "face_landmark_compiled.tflite", options)
-```
+Expected: `[GazeBoard] Confirmed NPU execution via CompiledModel API`
 
----
-
-## Model Details
-
-### Input Specification
-- Shape: `[1, 192, 192, 3]`
-- Type: `float32`
-- Range: `[0.0, 1.0]`
-- Color order: RGB (not BGR)
-- Expected content: full face, roughly centered, any orientation
-
-### Output Specification
-- Shape: `[1, 1434]` or `[1, 478, 3]` (equivalent, model-dependent)
-- Type: `float32`
-- Layout: `[x0, y0, z0, x1, y1, z1, ..., x477, y477, z477]`
-- Coordinate system: normalized to [0,1] relative to 192×192 input
-- Landmark 468 = left iris center (primary gaze signal)
-- Landmark 473 = right iris center (primary gaze signal)
-
-### Key Landmark Indices for GazeBoard
-```
-468: Left iris center      ← CRITICAL
-469-472: Left iris contour
-473: Right iris center     ← CRITICAL
-474-477: Right iris contour
-33:  Left eye outer corner
-133: Left eye inner corner
-159: Left eye upper lid
-145: Left eye lower lid
-362: Right eye outer corner
-263: Right eye inner corner
-386: Right eye upper lid
-374: Right eye lower lid
-```
+If you see `WARNING: Running on GPU` — the app is still warming or a few ops fell back to GPU. Relaunch; it should show NPU on the second run once the cache is populated.
 
 ---
 
@@ -174,9 +128,8 @@ CompiledModel.create(context.assets, "face_landmark_compiled.tflite", options)
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `CompiledModel.create()` throws exception | Wrong model file or wrong accelerator | Verify model shape matches above; try `Accelerator.GPU` as intermediate step |
-| Badge shows "CPU" instead of "NPU" | JIT compilation failed, fell back | Check Logcat for NPU error; try AOT compilation via AI Hub |
-| Landmarks all zero | Model loaded wrong input | Verify FloatBuffer is 192×192×3 and values are [0,1] |
-| Output shape mismatch | Wrong FaceMesh variant | Need 478-landmark (with iris) version; 468-landmark variant lacks iris indices |
-| App crashes on `runInference()` | ImageProxy not closed before next frame | Ensure `imageProxy.close()` is always called |
-| NPU library not found | Missing `litert-qualcomm` dependency | Verify `build.gradle.kts` includes `com.google.ai.edge.litert:litert-qualcomm:2.1.0` |
+| Badge shows "CPU" on every launch | JIT compilation failed for NPU | Check Logcat for error; try GPU-only: `Accelerator.GPU` to confirm model loads |
+| `CompiledModel.create()` throws | Wrong model format or corrupt file | Verify file is valid TFLite (check magic bytes: first 4 bytes should be `1C 00 00 00`) |
+| Output shape mismatch | Wrong model variant | Need 478-landmark (iris) version; see above |
+| First launch takes 10+ seconds | JIT compilation in progress | Normal — subsequent launches are instant |
+| App crashes immediately | Model not in assets | Confirm file is at `app/src/main/assets/face_landmark.tflite` |

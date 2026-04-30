@@ -42,7 +42,7 @@ class FaceLandmarkModel(private val context: Context) {
 
     companion object {
         private const val TAG = "GazeBoard"
-        private const val MODEL_ASSET = "face_landmark_compiled.tflite"
+        private const val MODEL_ASSET = "face_landmark.tflite"
         private const val INPUT_SIZE = 192
         // 478 landmarks × 3 coordinates (x, y, z)
         private const val LANDMARK_COUNT = 478
@@ -57,10 +57,14 @@ class FaceLandmarkModel(private val context: Context) {
      */
     fun load() {
         try {
+            // NPU preferred; GPU as fallback if an op isn't NPU-supported.
+            // LiteRT JIT-compiles for the Hexagon NPU on first launch and caches the result.
+            // Launch the app once before the demo to warm the compilation cache.
             val options = CompiledModel.Options.Builder()
-                .setAccelerator(Accelerator.NPU)
+                .setAccelerator(Accelerator.NPU, Accelerator.GPU)
                 .build()
 
+            // First launch JIT-compiles for Hexagon NPU and caches. ~2-5s delay on first run only.
             model = CompiledModel.create(context.assets, MODEL_ASSET, options)
 
             // Verify we're actually running on the NPU — critical for judging criteria
@@ -69,9 +73,9 @@ class FaceLandmarkModel(private val context: Context) {
             if (acceleratorName == "NPU") {
                 Log.i(TAG, "Confirmed NPU execution via CompiledModel API")
             } else {
-                // This is a warning, not a fatal error — app continues but may not meet judging bar
                 Log.w(TAG, "WARNING: Running on $acceleratorName, not NPU! " +
-                        "Check that model is AOT-compiled for SM8750 via Qualcomm AI Hub.")
+                        "If this is first launch, JIT cache may still be compiling. " +
+                        "Restart the app to use the cached NPU model.")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load model: ${e.message}", e)

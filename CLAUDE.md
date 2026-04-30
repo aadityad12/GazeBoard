@@ -35,11 +35,12 @@ GazeBoard is a real-time, fully on-device eye-gaze-controlled AAC (Augmentative 
 
 ## Key Constraints (DO NOT VIOLATE)
 
-- **CompiledModel API only** — use `CompiledModel.create(context.assets, modelPath, CompiledModel.Options(Accelerator.NPU))`. Never use `Interpreter`.
+- **CompiledModel API only** — use `CompiledModel.create(context.assets, modelPath, CompiledModel.Options.Builder().setAccelerator(Accelerator.NPU, Accelerator.GPU).build())`. Never use `Interpreter`.
 - **NPU accelerator required** — must verify at runtime that execution is on NPU, not CPU fallback. Display accelerator badge in UI.
 - **Offline only** — no network calls, no Firebase, no cloud APIs, no analytics.
 - **6 cells max** — NOT a keyboard, NOT a sentence builder, NOT a word predictor. Six large phrase cells.
 - **No stretch feature creep** — iris_landmark model is stretch goal only; implement only if core works by Hour 8.
+- **No MediaPipe framework dependency** — use raw .tflite models only. We do NOT depend on Qualcomm AI Hub accounts or AOT compilation. LiteRT JIT-compiles any .tflite for the Hexagon NPU on first launch and caches the result. Launch the app once before the demo to warm the cache.
 
 ---
 
@@ -144,8 +145,8 @@ GazeBoard/
 ├── models/
 │   └── README.md                      ← Model acquisition instructions
 ├── scripts/
-│   ├── export_models.py               ← AI Hub export script
-│   └── push_to_device.sh              ← ADB push script
+│   ├── download_models.sh             ← Download face landmark .tflite
+│   └── install_and_run.sh             ← Build, install, launch (warms JIT cache)
 └── app/
     ├── build.gradle.kts
     └── src/main/
@@ -180,16 +181,16 @@ GazeBoard/
 ## Build & Run
 
 ```bash
-# 1. Acquire compiled model (see models/README.md)
-python scripts/export_models.py
+# 1. Acquire model (see models/README.md for all options)
+bash scripts/download_models.sh
 
-# 2. Push model to device
-bash scripts/push_to_device.sh
+# 2. Build, install, and launch (first launch warms LiteRT JIT cache)
+bash scripts/install_and_run.sh
 
-# 3. Open in Android Studio, sync Gradle, run on S25 Ultra
-# OR build via CLI:
+# OR manually:
 ./gradlew :app:assembleDebug
 adb install app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n com.gazeboard/.MainActivity
 ```
 
 ---

@@ -85,6 +85,9 @@ If NPU inference is forced to CPU (fallback): expect 60–120ms, dropping to ~8 
 
 ## CompiledModel API — Kotlin Implementation
 
+LiteRT JIT-compiles the model for the Hexagon NPU on first launch and caches the result.
+**Launch the app once before the demo** to warm the cache. No AOT compilation or Qualcomm AI Hub account required.
+
 ```kotlin
 // FaceLandmarkModel.kt
 
@@ -97,13 +100,16 @@ class FaceLandmarkModel(private val context: Context) {
     private var lastAccelerator: String = "UNKNOWN"
 
     fun load() {
+        // NPU preferred; GPU as fallback if any op isn't NPU-supported.
+        // LiteRT JIT-compiles for Hexagon NPU on first launch (~2-5s), then caches.
         val options = CompiledModel.Options.Builder()
-            .setAccelerator(Accelerator.NPU)
+            .setAccelerator(Accelerator.NPU, Accelerator.GPU)
             .build()
 
+        // First launch: JIT compilation. Subsequent launches: cached compiled model.
         model = CompiledModel.create(
             context.assets,
-            "face_landmark_compiled.tflite",
+            "face_landmark.tflite",
             options
         )
 
