@@ -1,6 +1,9 @@
 package com.gazeboard.ui
 
+import androidx.camera.core.Preview
+import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,15 +12,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.gazeboard.state.AppState
 import com.gazeboard.state.GazeState
 import com.gazeboard.ui.components.GazeCursor
@@ -45,6 +52,7 @@ fun BoardScreen(
     appState: AppState,
     phrases: List<String>,
     onRecalibrate: () -> Unit,
+    onPreviewSurfaceReady: ((Preview.SurfaceProvider) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val selectedCell = (appState as? AppState.Selected)?.cellIndex
@@ -147,6 +155,24 @@ fun BoardScreen(
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
             }
+        }
+
+        // Camera preview PiP — bottom-left corner, helps user center their face
+        if (onPreviewSurfaceReady != null) {
+            AndroidView(
+                factory = { ctx ->
+                    PreviewView(ctx).apply {
+                        scaleType = PreviewView.ScaleType.FILL_CENTER
+                        onPreviewSurfaceReady(surfaceProvider)
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 12.dp, bottom = 12.dp)
+                    .size(width = 120.dp, height = 160.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .border(1.5.dp, Color(0xFF3D6B9E), RoundedCornerShape(10.dp))
+            )
         }
 
         // Triple-tap anywhere to recalibrate (hidden but discoverable)

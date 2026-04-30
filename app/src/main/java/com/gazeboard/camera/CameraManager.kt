@@ -8,6 +8,7 @@ import android.view.Surface
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
@@ -39,6 +40,9 @@ class CameraManager(
 ) {
 
     private val inferenceExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+
+    // Exposed so BoardScreen can attach a PreviewView surface provider
+    val preview: Preview = Preview.Builder().build()
 
     companion object {
         private const val TAG = "GazeBoard"
@@ -74,6 +78,7 @@ class CameraManager(
                 cameraProvider.bindToLifecycle(
                     lifecycleOwner,
                     CameraSelector.DEFAULT_FRONT_CAMERA,
+                    preview,
                     imageAnalysis
                 )
                 Log.i(TAG, "CameraX ImageAnalysis bound (640×480, RGBA_8888, KEEP_ONLY_LATEST)")

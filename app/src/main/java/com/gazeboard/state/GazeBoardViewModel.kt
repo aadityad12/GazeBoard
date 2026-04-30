@@ -5,6 +5,7 @@ import android.graphics.PointF
 import android.os.SystemClock
 import android.util.Log
 import androidx.compose.ui.geometry.Offset
+import androidx.camera.core.Preview
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -153,6 +154,10 @@ class GazeBoardViewModel : ViewModel() {
         // TODO(Person B): calibrationEngine.computeAffineTransform()
         _appState.value = AppState.Tracking
         Log.i(TAG, "Calibration complete — entering tracking mode")
+    }
+
+    fun setPreviewSurface(provider: Preview.SurfaceProvider) {
+        if (::cameraManager.isInitialized) cameraManager.preview.setSurfaceProvider(provider)
     }
 
     fun startCalibration() {

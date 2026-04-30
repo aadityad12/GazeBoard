@@ -59,7 +59,8 @@ class MainActivity : ComponentActivity() {
                         gazeState = gazeState,
                         appState = appState,
                         phrases = viewModel.phrases,
-                        onRecalibrate = viewModel::startCalibration
+                        onRecalibrate = viewModel::startCalibration,
+                        onPreviewSurfaceReady = viewModel::setPreviewSurface
                     )
                 }
             }
