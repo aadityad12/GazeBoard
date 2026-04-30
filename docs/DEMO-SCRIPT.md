@@ -75,11 +75,9 @@
 
 *[Point to the NPU badge in the corner of the screen.]*
 
-> "See this badge — 'NPU · 8ms'. That's the LiteRT CompiledModel API executing face landmark inference on the Hexagon NPU — not the CPU, not the GPU — the dedicated neural processing unit on the Snapdragon 8 Elite. Eight milliseconds per frame. LiteRT compiles the model specifically for this chip's NPU at runtime and caches it. No generic interpreter. No cloud compilation. Just the CompiledModel API running natively on-NPU."
+> "See this badge — 'NPU · 8ms'. That's the LiteRT CompiledModel API running the EyeGaze model on the Hexagon NPU — not the CPU, not the GPU — the dedicated neural processing unit on the Snapdragon 8 Elite. Eight milliseconds per frame. LiteRT compiled the model specifically for this chip's NPU at launch time and cached it."
 
-*[Optional: toggle to show landmark overlay if implemented.]*
-
-> "Each frame, we extract 478 facial landmarks, isolate the iris center indices, normalize gaze relative to eye corners, apply an affine calibration transform — and that's the cursor position. All in one inference pass."
+> "The pipeline is two stages: Android's built-in face detector finds the eye region from the camera frame — that runs on CPU in about 30ms. Then we crop and resize to a 96-by-160 grayscale image and feed it into EyeGaze on the NPU. EyeGaze outputs two numbers: pitch and yaw — the vertical and horizontal gaze angle in radians. We map those through a calibration transform to screen coordinates, and that's the cursor."
 
 ---
 

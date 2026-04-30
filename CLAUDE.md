@@ -2,7 +2,7 @@
 
 ## Project Summary
 
-GazeBoard is a real-time, fully on-device eye-gaze-controlled AAC (Augmentative and Alternative Communication) board for people with ALS, locked-in syndrome, or severe motor disabilities. The user looks at one of 6 large phrase cells for ~1.5 seconds; the app detects gaze via MediaPipe FaceMesh iris landmarks from the front camera, selects the phrase, and speaks it aloud via Android TTS. No internet. No cloud. Runs on the Hexagon NPU of the Galaxy S25 Ultra via LiteRT's CompiledModel API. Built for the **Qualcomm × LiteRT Developer Hackathon, April 30–May 1, 2026**.
+GazeBoard is a real-time, fully on-device eye-gaze-controlled AAC (Augmentative and Alternative Communication) board for people with ALS, locked-in syndrome, or severe motor disabilities. The user looks at one of 6 large phrase cells for ~1.5 seconds; the app detects gaze via a two-stage pipeline — Android FaceDetector crops the eye region, then the **EyeGaze model** (`qualcomm/EyeGaze`) estimates pitch and yaw angles on the Hexagon NPU via LiteRT's CompiledModel API. The resulting gaze angle is mapped to the 6-cell grid and the phrase is spoken via Android TTS. No internet. No cloud. Built for the **Qualcomm × LiteRT Developer Hackathon, April 30–May 1, 2026**.
 
 ---
 
@@ -53,6 +53,7 @@ GazeBoard is a real-time, fully on-device eye-gaze-controlled AAC (Augmentative 
 | LiteRT Core | `com.google.ai.edge.litert:litert` | 2.1.0 |
 | LiteRT Qualcomm NPU | `com.google.ai.edge.litert:litert-qualcomm` | 2.1.0 |
 | Camera | CameraX | 1.3.x |
+| Face detection | `android.media.FaceDetector` | framework (CPU) |
 | TTS | Android TextToSpeech | framework |
 | State | ViewModel + StateFlow | Jetpack lifecycle |
 | minSdk | 26 | Android 8.0 |
@@ -61,52 +62,41 @@ GazeBoard is a real-time, fully on-device eye-gaze-controlled AAC (Augmentative 
 
 ---
 
-## Landmark Indices (face_landmark 478-point model)
+## EyeGaze Model (qualcomm/EyeGaze)
 
-| Index | Description |
-|-------|-------------|
-| 468 | Left iris center — **primary gaze point** |
-| 469–472 | Left iris contour |
-| 473 | Right iris center — **primary gaze point** |
-| 474–477 | Right iris contour |
-| 33 | Left eye outer corner (X normalization) |
-| 133 | Left eye inner corner (X normalization) |
-| 159 | Left eye upper lid (Y normalization + blink) |
-| 145 | Left eye lower lid (Y normalization + blink) |
-| 362 | Right eye outer corner (X normalization) |
-| 263 | Right eye inner corner (X normalization) |
-| 386 | Right eye upper lid (Y normalization + blink) |
-| 374 | Right eye lower lid (Y normalization + blink) |
+**File:** `app/src/main/assets/eyegaze.tflite`
+**Source:** `models/mediapipe_face-tflite-float/eyegaze.tflite`
 
-### Gaze Normalization Formula
+| Tensor | Name | Shape | Type | Notes |
+|--------|------|-------|------|-------|
+| Input | image | `[1, 96, 160]` | float32 | Grayscale [0,1], no channel dim |
+| Output 0 | heatmaps | `[1, 3, 34, 48, 80]` | float32 | Eye landmark heatmaps (unused) |
+| Output 1 | landmarks | `[1, 34, 2]` | float32 | 34 eye landmark XY positions |
+| Output 2 | gaze_pitchyaw | `[1, 2]` | float32 | **[pitch, yaw] in radians** |
+
+### Gaze Angles
 ```
-// For left eye:
-gazeX = (iris468.x - corner33.x) / (corner133.x - corner33.x)  // 0=left, 1=right
-gazeY = (iris468.y - lid159.y)   / (lid145.y   - lid159.y)     // 0=top,  1=bottom
-
-// Average left + right eyes, then apply EMA:
-smoothed = alpha * raw + (1 - alpha) * previous   // alpha = 0.3
-
-// Apply calibration affine transform:
-calibrated = affineMatrix * [smoothedX, smoothedY, 1]^T
+pitch > 0 = looking down,  pitch < 0 = looking up     range: [-0.5, 0.5] rad
+yaw   > 0 = looking right, yaw   < 0 = looking left   range: [-0.8, 0.8] rad
 ```
 
-### Blink Detection
+### EMA Smoothing
+```kotlin
+smoothedPitch = alpha * rawPitch + (1 - alpha) * smoothedPitch  // alpha = 0.3
+smoothedYaw   = alpha * rawYaw   + (1 - alpha) * smoothedYaw
 ```
-// Eye Aspect Ratio (EAR):
-EAR = (lid159.y - lid145.y) / (corner133.x - corner33.x)
-// Blink if EAR < 0.2 for ≥ 2 consecutive frames
+
+### Calibration (pitch/yaw → screen pixels)
 ```
+calibrated = affineMatrix(2×3) * [pitch, yaw, 1]^T
+```
+4-point corner calibration computes the affine matrix from recorded (pitch,yaw) at each corner.
 
 ---
 
-## Fallback Plan (Head Pose — activate if iris fails by Hour 8)
+## Fallback Plan (if EyeDetector fails at Hour 8)
 
-If iris tracking consistently maps to wrong cells despite calibration, switch to **head pose** derived from existing landmark output. No new model needed.
-
-Key landmarks for head pose: 1 (nose tip), 33 (left eye corner), 263 (right eye corner), 61 (mouth left), 291 (mouth right), 199 (chin).
-
-Derive pitch (up/down) and yaw (left/right) using simplified solvePnP-equivalent. Map pitch to row (top/middle/bottom), yaw to column (left/right). Same 2×3 grid, same dwell timer, same TTS. 2-hour pivot, not a rebuild.
+If `android.media.FaceDetector` is too unreliable, replace `EyeDetector.kt` with ML Kit face detection (Option B). Same pipeline contract — only `EyeDetector.detectAndCrop()` changes. The EyeGaze NPU inference, CalibrationEngine, and UI are unaffected.
 
 ---
 
@@ -114,14 +104,13 @@ Derive pitch (up/down) and yaw (left/right) using simplified solvePnP-equivalent
 
 ```
 Front Camera (640×480 @ 15 fps)
-  → ImageAnalysis (CameraX)
-  → Bitmap crop + resize (192×192 RGBA float)
-  → face_landmark.tflite on NPU (CompiledModel)
-  → FloatArray[478 * 3] landmarks
-  → Extract iris indices 468, 473
-  → Normalize gaze (iris relative to eye corners)
+  → CameraX ImageAnalysis (ARGB_8888, KEEP_ONLY_LATEST)
+  → android.media.FaceDetector → eye midpoint + eye distance   [CPU, ~30ms]
+  → Crop eye region → resize 160×96 → grayscale normalize
+  → eyegaze.tflite on NPU (CompiledModel)                      [NPU, ~8ms]
+  → gaze_pitchyaw [1, 2] → pitch, yaw in radians
   → EMA smoothing (α = 0.3)
-  → Calibration affine transform
+  → Calibration affine transform: (pitch, yaw) → screen (x, y)
   → Map to 2×3 grid cell index
   → Dwell timer (1.5s threshold)
   → TTS output (QUEUE_FLUSH)
@@ -155,7 +144,8 @@ GazeBoard/
         │   ├── MainActivity.kt
         │   ├── GazeBoardApplication.kt
         │   ├── ml/
-        │   │   ├── FaceLandmarkModel.kt
+        │   │   ├── EyeGazeModel.kt
+        │   │   ├── EyeDetector.kt
         │   │   └── GazeEstimator.kt
         │   ├── camera/
         │   │   └── CameraManager.kt

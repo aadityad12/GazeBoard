@@ -88,11 +88,11 @@ fun CalibrationScreen(
         if (!captureDone && corners.isNotEmpty() && corners[currentPoint] != Offset.Zero) {
             val corner = corners[currentPoint]
             val screenPt = PointF(corner.x, corner.y)
-            // Stub: use current gaze if available, else use corner position as approximation
-            val gazePt = gazeState.gazePoint?.let { PointF(it.x, it.y) }
-                ?: PointF(corner.x / screenSize.first, corner.y / screenSize.second)
+                    // Pass current pitch/yaw from GazeState as the gaze observation at this corner.
+            // x = pitch, y = yaw (matches CalibrationEngine.addCalibrationPoint convention)
+            val pitchYaw = PointF(gazeState.rawPitch, gazeState.rawYaw)
 
-            onCalibrationPointCaptured(screenPt, gazePt)
+            onCalibrationPointCaptured(screenPt, pitchYaw)
             captureDone = true
 
             if (currentPoint < 3) {

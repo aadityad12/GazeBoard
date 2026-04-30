@@ -13,41 +13,40 @@
 │  └──────────────┘                   │ ImageProxy (RGBA_8888)     │
 │                                     ▼                            │
 │                        ┌────────────────────────┐               │
-│                        │   Bitmap Preprocessing  │               │
-│                        │  crop face region        │               │
-│                        │  resize → 192×192        │               │
-│                        │  normalize [0,1]          │               │
+│                        │      EyeDetector        │               │
+│                        │  android.media.Face     │  [CPU ~30ms]  │
+│                        │  Detector → eye midpt   │               │
+│                        │  crop → 160×96 resize   │               │
+│                        │  grayscale normalize    │               │
 │                        └────────────┬───────────┘               │
-│                                     │ FloatBuffer 192×192×3      │
+│                                     │ FloatBuffer[15360]         │
+│                                     │ (96×160 grayscale [0,1])   │
 │                                     ▼                            │
 │                        ┌────────────────────────┐               │
-│                        │  FaceLandmarkModel      │               │
-│                        │  CompiledModel API      │               │
-│                        │  Accelerator.NPU        │               │
-│                        │  (Hexagon DSP/NPU)      │               │
+│                        │    EyeGazeModel         │               │
+│                        │  CompiledModel API      │  [NPU ~8ms]   │
+│                        │  Accelerator.NPU,GPU    │               │
+│                        │  eyegaze.tflite         │               │
 │                        └────────────┬───────────┘               │
-│                                     │ FloatArray[1434]           │
-│                                     │ (478 landmarks × 3)        │
+│                                     │ GazeAngles(pitch, yaw)     │
+│                                     │ (radians, [1,2] output)    │
 │                                     ▼                            │
 │                        ┌────────────────────────┐               │
 │                        │    GazeEstimator        │               │
-│                        │  extract iris idx 468   │               │
-│                        │  normalize to eye rect  │               │
 │                        │  EMA smoothing α=0.3    │               │
-│                        │  blink detection EAR    │               │
 │                        └────────────┬───────────┘               │
-│                                     │ PointF (rawGaze)           │
+│                                     │ smoothed (pitch, yaw)      │
 │                                     ▼                            │
 │                        ┌────────────────────────┐               │
 │                        │  CalibrationEngine      │               │
-│                        │  4-point affine matrix  │               │
-│                        │  screen space mapping   │               │
+│                        │  4-pt pitch/yaw→screen  │               │
+│                        │  affine matrix          │               │
 │                        └────────────┬───────────┘               │
-│                                     │ PointF (screenGaze)        │
+│                                     │ PointF (screenX, screenY)  │
 │                                     ▼                            │
 │                        ┌────────────────────────┐               │
 │                        │  GazeBoardViewModel     │               │
-│                        │  mapToCell(gaze)        │               │
+│                        │  mapToCell(screenPos)   │               │
 │                        │  DwellTimer (1.5s)      │               │
 │                        │  StateFlow<GazeState>   │               │
 │                        └────────────┬───────────┘               │
@@ -66,20 +65,21 @@
 
 ## Inference Pipeline — Latency Budget
 
-Target: **< 30ms total per frame** (enables ≥15 FPS continuous tracking)
+Target: **< 60ms total per frame** (sufficient for 15 FPS gaze tracking)
 
 | Stage | Target | Notes |
 |-------|--------|-------|
 | Camera → ImageProxy | ~0ms | Hardware pipeline |
-| Bitmap crop + resize | ~2ms | CPU, done on analysis executor |
-| Float normalization | ~1ms | CPU |
-| NPU inference (face_landmark) | **~8ms** | Hexagon NPU via CompiledModel |
-| Landmark extraction + gaze math | ~1ms | CPU, simple arithmetic |
-| EMA + calibration transform | ~0.5ms | Matrix multiply |
+| FaceDetector (eye locate) | **~30ms** | CPU, `android.media.FaceDetector` |
+| Eye crop + resize to 160×96 | ~2ms | CPU |
+| Grayscale normalize | ~1ms | CPU |
+| EyeGaze NPU inference | **~8ms** | Hexagon NPU via CompiledModel API |
+| EMA smoothing | ~0.5ms | CPU, simple arithmetic |
+| Calibration affine transform | ~0.5ms | Matrix multiply |
 | ViewModel StateFlow emission | ~0.5ms | Coroutine dispatch |
-| **Total** | **~13ms** | ~76 FPS theoretical max |
+| **Total** | **~42ms** | ~24 FPS theoretical max |
 
-If NPU inference is forced to CPU (fallback): expect 60–120ms, dropping to ~8 FPS. This is a fail state — display warning.
+If EyeGaze inference is forced to CPU fallback: NPU stage rises to ~80ms. Display warning via NpuBadge. FaceDetector is always CPU — that's expected and acceptable.
 
 ---
 

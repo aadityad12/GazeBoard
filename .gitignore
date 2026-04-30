@@ -1,4 +1,15 @@
 .venv*/
 *.venv/
 app/.gradle/
+build/
+app/build/
+*.iml
+.idea/
+local.properties
+
+# Model source dir is large — asset is committed instead
 models/mediapipe_face-tflite-float/
+
+# Don't commit compiled outputs or OS noise
+*.class
+.DS_Store

@@ -4,33 +4,36 @@
 
 ### Person A — ML & Inference
 **Owns:** `app/src/main/java/com/gazeboard/ml/`
-**Deliverable by Hour 6:** `FaceLandmarkModel.kt` running CompiledModel inference on NPU, outputting a verified `FloatArray` of 478×3 landmarks per frame at ≥10 FPS.
+**Deliverable by Hour 6:** `EyeGazeModel.kt` running CompiledModel inference on NPU, `EyeDetector.kt` producing eye crops, delivering verified `(pitch, yaw)` per frame at ≥10 FPS.
 
 **Tasks:**
-1. Wire up `CompiledModel.create()` with `Accelerator.NPU`
-2. Implement bitmap → FloatBuffer preprocessing (192×192 RGBA normalized to [0,1])
-3. Parse output tensor into `FloatArray(478 * 3)` — layout is `[x0,y0,z0, x1,y1,z1, ...]`
-4. Verify NPU execution via accelerator query; log and display if falling back to CPU
-5. Expose `fun runInference(bitmap: Bitmap): FloatArray?` — returns null if face not detected
+1. Wire up `CompiledModel.create()` with `Accelerator.NPU, Accelerator.GPU` in `EyeGazeModel.kt`
+2. Log all input/output tensor shapes on load to confirm they match `metadata.json`
+3. Implement `EyeDetector.detectAndCrop()` using `android.media.FaceDetector`
+   - RGB_565 bitmap conversion for FaceDetector
+   - Crop → resize to 160×96 → grayscale normalize [0,1]
+   - Output: `FloatBuffer[15360]`
+4. Allocate all 3 output buffers for `CompiledModel.run()` (heatmaps, landmarks, gaze_pitchyaw)
+5. Verify NPU execution via `model.accelerator.name`; update `NpuBadge` with result
+6. First launch: accept the ~2–5s JIT compilation delay; subsequent launches use cache
 
-**Blocks:** Person B cannot implement gaze math without this output.
+**Blocks:** Person B cannot implement GazeEstimator without the `EyeGazeModel.runInference()` interface.
 
 ---
 
 ### Person B — Camera & Gaze Math
-**Owns:** `app/src/main/java/com/gazeboard/camera/`, `app/src/main/java/com/gazeboard/calibration/`
-**Deliverable by Hour 6:** Calibrated gaze point rendered on screen as a moving cursor, correctly mapping to grid cells.
+**Owns:** `app/src/main/java/com/gazeboard/camera/`, `app/src/main/java/com/gazeboard/calibration/`, `app/src/main/java/com/gazeboard/ml/GazeEstimator.kt`
+**Deliverable by Hour 6:** Calibrated gaze cursor on screen, correctly mapping to grid cells via pitch/yaw → affine → screen pixels.
 
 **Tasks:**
-1. Set up CameraX `ImageAnalysis` use case (640×480, RGBA_8888, non-blocking backpressure)
-2. Implement bitmap crop → 192×192 resize → call Person A's `runInference()`
-3. Implement gaze normalization formula (see CLAUDE.md)
-4. Implement EMA smoothing (α = 0.3)
-5. Implement 4-point calibration → affine matrix computation
-6. Implement `fun applyCalibration(rawGaze: PointF): PointF`
-7. Implement `fun mapToCell(calibratedGaze: PointF): Int?` (0–5 for 2×3 grid, null if outside)
+1. Set up CameraX `ImageAnalysis` (640×480, RGBA_8888, `KEEP_ONLY_LATEST`)
+2. In `GazeEstimator.estimate()`: call `EyeDetector.detectAndCrop()` then `EyeGazeModel.runInference()`
+3. Implement EMA smoothing for pitch and yaw (α = 0.3, initialized to first sample)
+4. Implement `CalibrationEngine`: 4-point (pitch, yaw) → (screenX, screenY) affine mapping
+5. Wire calibration into `GazeBoardViewModel.onCalibrationPointCaptured()`
+6. Replace the stub linear mapping in `GazeBoardViewModel.onGazeUpdate()` with `calibrationEngine.applyCalibration(pitch, yaw)`
 
-**Depends on:** Person A's `FaceLandmarkModel.runInference()` interface.
+**Depends on:** Person A's `EyeGazeModel.runInference(eyeBuffer: FloatBuffer): GazeAngles?` interface.
 
 ---
 
@@ -53,35 +56,41 @@
 
 ## Interface Contracts (DO NOT CHANGE without team agreement)
 
-### Contract A→B: Landmark Output
+### Contract A→B: Eye Gaze Inference
 ```kotlin
-// FaceLandmarkModel.kt — Person A owns this signature
-fun runInference(bitmap: Bitmap): FloatArray?
-// Returns: FloatArray of size 478 * 3, layout [x0,y0,z0, x1,y1,z1, ...]
-// All values normalized to [0,1] relative to 192×192 input
-// Returns null if model fails or face confidence below threshold
-// Must be called from background thread (ImageAnalysis executor)
+// EyeGazeModel.kt — Person A owns this signature
+fun runInference(inputBuffer: FloatBuffer): GazeAngles?
+// inputBuffer: FloatBuffer[15360] = grayscale [0,1] at 160×96 (row-major height×width)
+// GazeAngles.pitch: Float  — radians, positive=down
+// GazeAngles.yaw:   Float  — radians, positive=right
+// Returns null if model not loaded or inference fails
+
+// EyeDetector.kt — Person A owns this signature
+fun detectAndCrop(bitmap: Bitmap): FloatBuffer?
+// Returns FloatBuffer[15360] for EyeGazeModel, or null if no face detected
 ```
 
 ### Contract B→C: Gaze & Cell Output (via ViewModel StateFlow)
 ```kotlin
 // GazeBoardViewModel.kt — shared ownership
 data class GazeState(
-    val gazePoint: Offset?,          // calibrated gaze in screen coordinates, null if undetected
-    val hoveredCell: Int?,           // 0–5 (row-major: 0=top-left, 5=bottom-right), null if none
-    val dwellProgress: Float,        // 0.0f–1.0f progress toward selection threshold
-    val inferenceMs: Long,           // last NPU inference time in milliseconds
-    val accelerator: String,         // "NPU", "GPU", or "CPU"
-    val isBlinking: Boolean          // true if EAR < 0.2
+    val gazePoint: Offset?,      // calibrated gaze in screen pixels; null if no face
+    val hoveredCell: Int?,       // 0–5 (row-major 2×3); null if between cells
+    val dwellProgress: Float,    // 0.0–1.0
+    val inferenceMs: Long,       // EyeGaze NPU inference time in ms
+    val accelerator: String,     // "NPU", "GPU", or "CPU"
+    val faceDetected: Boolean,
+    val rawPitch: Float,         // smoothed pitch for calibration capture
+    val rawYaw: Float            // smoothed yaw for calibration capture
 )
 ```
 
 ### Contract B→Calibration Engine
 ```kotlin
 // CalibrationEngine.kt — Person B owns this signature
-fun addCalibrationPoint(screenPoint: PointF, gazePoint: PointF)
-fun computeAffineTransform(): Boolean  // returns false if < 4 points collected
-fun applyCalibration(rawGaze: PointF): PointF
+fun addCalibrationPoint(screenPoint: PointF, pitchYaw: PointF)  // x=pitch, y=yaw
+fun computeAffineTransform(): Boolean
+fun applyCalibration(pitch: Float, yaw: Float): PointF  // returns screen pixel PointF
 fun reset()
 ```
 
@@ -123,17 +132,18 @@ Hour 8  ─── GO/NO-GO: Is gaze reliably hitting intended cells?
 
 **Person A ✓:**
 - [ ] `CompiledModel.create()` succeeds with NPU accelerator
-- [ ] Inference runs at ≥10 FPS on device (verify via Logcat timing)
-- [ ] Output FloatArray has exactly 478*3 = 1434 elements
-- [ ] Landmark 468 (left iris center) x,y values change smoothly as face moves
-- [ ] `runInference()` returns null gracefully when face is absent
+- [ ] Logcat shows "EyeGaze: confirmed NPU execution via CompiledModel API"
+- [ ] Inference runs at ≥10 FPS (verify via `lastInferenceMs` in Logcat)
+- [ ] `EyeDetector.detectAndCrop()` returns non-null FloatBuffer when face is in frame
+- [ ] `EyeGazeModel.runInference()` returns non-null `GazeAngles` with pitch/yaw changing as eyes move
+- [ ] Pitch changes when looking up/down; yaw changes when looking left/right
 
 **Person B ✓:**
-- [ ] CameraX `ImageAnalysis` delivering frames to inference pipeline
-- [ ] Gaze cursor moves in correct direction as eyes move
-- [ ] EMA smoothing prevents jitter (cursor doesn't teleport)
-- [ ] `mapToCell()` returns correct cell index (manually verified)
-- [ ] Calibration screen collects 4 points without crashing
+- [ ] CameraX `ImageAnalysis` delivering ARGB_8888 frames to `GazeEstimator`
+- [ ] Gaze cursor moves left when looking left (yaw↓), right when looking right (yaw↑)
+- [ ] EMA smoothing prevents jitter
+- [ ] Calibration screen collects 4 (pitch, yaw) points without crashing
+- [ ] `CalibrationEngine.computeAffineTransform()` succeeds (Logcat: "Affine transform computed")
 
 **Person C ✓:**
 - [ ] All 6 phrase cells render, fill screen, are readable at arm's length
