@@ -10,12 +10,6 @@ Inspired by Microsoft Research's [GazeSpeak](https://dl.acm.org/doi/10.1145/3025
 
 ---
 
-## Team
-
-- Shaheer Sheel — shahxsheel@gmail.com
-
----
-
 ## The Problem
 
 Dedicated AAC devices cost $8,000–$15,000, require months of insurance approval, and don't work outdoors. Over 500,000 people in the US alone could benefit from gaze-controlled AAC. Every S25 Ultra owner already has the hardware.
