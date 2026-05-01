@@ -164,7 +164,13 @@ class GazeBoardViewModel : ViewModel() {
     }
 
     private fun handleCalibrationGaze(result: GazeEstimator.GazeResult, state: AppState.Calibrating) {
-        if (result.quadrant == 0) return  // no face
+        if (result.quadrant == 0) {
+            // Face lost — reset so re-appearance restarts the 1.5 s dwell
+            currentDwellQuadrant = null
+            dwellStartMs = 0L
+            _appState.update { state.copy(dwellProgress = 0f) }
+            return
+        }
 
         calibrationEngine.accumulateSample(result.rawPitch, result.rawYaw)
 
@@ -201,7 +207,9 @@ class GazeBoardViewModel : ViewModel() {
         if (inCooldown) return
 
         if (quadrant == 0) {
-            // Face lost — pause dwell but don't reset (brief blink tolerance)
+            // Face lost — reset dwell so re-appearance doesn't auto-trigger
+            currentDwellQuadrant = null
+            dwellStartMs = 0L
             updateActiveQuadrant(null, 0f)
             return
         }
@@ -261,7 +269,7 @@ class GazeBoardViewModel : ViewModel() {
                 ttsManager.speak(phrase)
                 val newSentence = if (state.sentence.isEmpty()) phrase else "${state.sentence}. $phrase"
                 _appState.value = state.copy(
-                    activeQuadrant = quadrant, dwellProgress = 1f,
+                    activeQuadrant = null, dwellProgress = 0f,
                     sentence = newSentence
                 )
             }
@@ -297,9 +305,9 @@ class GazeBoardViewModel : ViewModel() {
                 ttsManager.speakFeedback(candidates.joinToString(", "))
             }
             candidates.isEmpty() -> {
-                // No matches — backspace last gesture
+                // No matches — drop the last gesture and let user try again
                 ttsManager.speakFeedback("No match, try again")
-                _appState.value = state.copy(gestureSequence = state.gestureSequence)
+                _appState.value = state.copy(gestureSequence = state.gestureSequence.dropLast(1))
             }
             else -> {
                 _appState.value = state.copy(

@@ -18,12 +18,12 @@ fun NpuBadge(accelerator: String, inferenceMs: Long, modifier: Modifier = Modifi
     val isNpu = accelerator.contains("NPU", ignoreCase = true) && !accelerator.contains("FAILED", ignoreCase = true)
     val badgeColor = when {
         isNpu             -> Color(0xFF0D4A1A)
-        accelerator == "CPU" -> Color(0xFF2A2A0A)
+        accelerator.contains("CPU", ignoreCase = true) -> Color(0xFF2A2A0A)
         else              -> Color(0xFF4A0D0D)
     }
     val textColor = when {
         isNpu             -> Color(0xFF4CAF50)
-        accelerator == "CPU" -> Color(0xFFFFEB3B)
+        accelerator.contains("CPU", ignoreCase = true) -> Color(0xFFFFEB3B)
         else              -> Color(0xFFEF5350)
     }
     val label = if (inferenceMs > 0L) "LiteRT: $accelerator · ${inferenceMs}ms" else "LiteRT: $accelerator"

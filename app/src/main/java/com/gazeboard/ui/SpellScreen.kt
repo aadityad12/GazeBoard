@@ -14,6 +14,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -23,23 +27,19 @@ import androidx.compose.ui.unit.sp
 import com.gazeboard.state.AppState
 import com.gazeboard.ui.components.DebugOverlay
 import com.gazeboard.ui.components.QuadrantCell
+import com.gazeboard.ui.components.SettingsOverlay
 
-private val ScreenBg = Color(0xFF060E1A)
-private val DividerColor = Color(0xFF1A3050)
-private val GestureDotsColor = Color(0xFF00BFFF)
+private val ScreenBg       = Color(0xFF030B14)
+private val DividerColor   = Color(0xFF0F2035)
+private val GestureColor   = Color(0xFF00BFFF)
 
 /**
- * Spell Mode screen — shown for both Spelling and WordSelection states.
+ * Spell Mode screen — shared for Spelling and WordSelection states.
  *
- * In Spelling state, quadrants show letter groups:
- *   1 = A–G    2 = H–M
- *   3 = N–S    4 = T–Z
+ * Spelling:      quadrants show letter groups (A-G / H-M / N-S / T-Z)
+ * WordSelection: quadrants show word candidates + BACK ◄
  *
- * In WordSelection state (≤3 candidates), quadrants show word candidates:
- *   1 = candidate[0]   2 = candidate[1]
- *   3 = candidate[2]   4 = BACK ◄
- *
- * A gesture sequence indicator below the sentence bar shows progress.
+ * Gear icon (⚙) opens SettingsOverlay.
  */
 @Composable
 fun SpellScreen(
@@ -56,25 +56,27 @@ fun SpellScreen(
     rawYaw: Float = 0f,
     modifier: Modifier = Modifier
 ) {
+    var settingsOpen by remember { mutableStateOf(false) }
+
     val isWordSelection = state is AppState.WordSelection
-    val candidates = (state as? AppState.WordSelection)?.candidates ?: emptyList()
+    val candidates      = (state as? AppState.WordSelection)?.candidates ?: emptyList()
     val gestureSequence = when (state) {
-        is AppState.Spelling     -> state.gestureSequence
+        is AppState.Spelling      -> state.gestureSequence
         is AppState.WordSelection -> state.gestureSequence
         else -> emptyList()
     }
     val activeQuadrant = when (state) {
-        is AppState.Spelling     -> state.activeQuadrant
+        is AppState.Spelling      -> state.activeQuadrant
         is AppState.WordSelection -> state.activeQuadrant
         else -> null
     }
     val dwellProgress = when (state) {
-        is AppState.Spelling     -> state.dwellProgress
+        is AppState.Spelling      -> state.dwellProgress
         is AppState.WordSelection -> state.dwellProgress
         else -> 0f
     }
     val sentence = when (state) {
-        is AppState.Spelling     -> state.sentence
+        is AppState.Spelling      -> state.sentence
         is AppState.WordSelection -> state.sentence
         else -> ""
     }
@@ -87,7 +89,8 @@ fun SpellScreen(
     ) {
         SentenceBar(sentence = sentence, accelerator = accelerator, inferenceMs = inferenceMs)
 
-        if (gestureSequence.isNotEmpty()) {
+        // Only show gesture trail in Spelling mode; in WordSelection, user is choosing a word
+        if (state is AppState.Spelling && gestureSequence.isNotEmpty()) {
             GestureSequenceRow(gestureSequence = gestureSequence)
         }
 
@@ -128,20 +131,17 @@ fun SpellScreen(
         }
     }
 
+    // Floating overlays
     Box(modifier = Modifier.fillMaxSize().systemBarsPadding().padding(12.dp)) {
         FaceIndicator(faceDetected = faceDetected, modifier = Modifier.align(Alignment.TopEnd))
+
         TextButton(
-            onClick = onRecalibrate,
+            onClick = { settingsOpen = true },
             modifier = Modifier.align(Alignment.BottomEnd)
         ) {
-            Text("↺ Recalibrate", color = Color(0xFF8AAECA), fontSize = 12.sp)
+            Text("⚙", color = Color(0xFF4A7A9A), fontSize = 22.sp)
         }
-        TextButton(
-            onClick = onToggleDebug,
-            modifier = Modifier.align(Alignment.BottomStart)
-        ) {
-            Text(if (debugMode) "⬛ Debug" else "□ Debug", color = Color(0xFF00FF88), fontSize = 12.sp)
-        }
+
         if (debugMode) {
             DebugOverlay(
                 fps = fps,
@@ -156,6 +156,17 @@ fun SpellScreen(
             )
         }
     }
+
+    if (settingsOpen) {
+        SettingsOverlay(
+            accelerator = accelerator,
+            inferenceMs = inferenceMs,
+            debugMode = debugMode,
+            onToggleDebug = onToggleDebug,
+            onRecalibrate = onRecalibrate,
+            onClose = { settingsOpen = false }
+        )
+    }
 }
 
 @Composable
@@ -164,19 +175,19 @@ fun GestureSequenceRow(gestureSequence: List<Int>) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF0D1B2A))
+            .background(Color(0xFF08111C))
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(text = "Gestures: ", color = Color(0xFF8AAECA), fontSize = 13.sp)
         gestureSequence.forEachIndexed { i, g ->
             if (i > 0) {
-                Text("·", color = Color(0xFF4A6A8A), fontSize = 13.sp,
+                Text("·", color = Color(0xFF3A5A7A), fontSize = 13.sp,
                     modifier = Modifier.padding(horizontal = 4.dp))
             }
             Text(
                 text = groupLabels[g] ?: g.toString(),
-                color = GestureDotsColor,
+                color = GestureColor,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold
             )

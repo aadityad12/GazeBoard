@@ -9,6 +9,10 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -22,16 +26,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gazeboard.state.AppState
 import com.gazeboard.ui.components.DebugOverlay
+import com.gazeboard.ui.components.SettingsOverlay
 
-private val ScreenBg = Color(0xFF060E1A)
+private val ScreenBg    = Color(0xFF030B14)
 private val TargetColor = Color(0xFF00BFFF)
-private val RingColor = Color(0xFF00BFFF)
 
 /**
  * Four-corner calibration screen.
- *
- * Shows a dot at the current corner target with a circular dwell progress arc.
- * User looks at the dot for 1.5 seconds to commit each corner.
+ * User looks at each corner dot for 1.5 s to commit that corner.
  * Order: Top-Left → Top-Right → Bottom-Left → Bottom-Right.
  */
 @Composable
@@ -48,6 +50,7 @@ fun CalibrationScreen(
     accelerator: String = "—",
     modifier: Modifier = Modifier
 ) {
+    var settingsOpen by remember { mutableStateOf(false) }
     val cornerNames = listOf("Top-Left", "Top-Right", "Bottom-Left", "Bottom-Right")
     val currentCorner = cornerNames.getOrElse(state.step) { "Done" }
 
@@ -57,26 +60,25 @@ fun CalibrationScreen(
             .background(ScreenBg)
             .systemBarsPadding()
     ) {
-        // Instructions
+        // Instruction text
         Text(
-            text = "Calibration ${state.step + 1} / 4\nLook at the $currentCorner target",
-            color = Color(0xFFB0C8E0),
-            fontSize = 22.sp,
+            text = "Calibration  ${state.step + 1} / 4\nLook at the  $currentCorner  target",
+            color = Color(0xFF8AAECA),
+            fontSize = 20.sp,
             fontWeight = FontWeight.Normal,
             textAlign = TextAlign.Center,
-            lineHeight = 32.sp,
+            lineHeight = 30.sp,
             modifier = Modifier
                 .align(Alignment.Center)
                 .padding(32.dp)
         )
 
-        // Corner targets drawn on canvas
+        // Corner dots + dwell arcs
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val dotRadius = 20f
-            val ringRadius = 48f
-            val margin = 80f
+            val dotRadius  = 18f
+            val ringRadius = 46f
+            val margin     = 88f
 
-            // Corner positions: TL, TR, BL, BR
             val corners = listOf(
                 Offset(margin, margin),
                 Offset(size.width - margin, margin),
@@ -86,20 +88,20 @@ fun CalibrationScreen(
 
             corners.forEachIndexed { index, pos ->
                 val isActive = index == state.step
-                val alpha = if (isActive) 1f else 0.25f
+                val alpha    = if (isActive) 1f else 0.22f
 
                 // Ring outline
                 drawCircle(
-                    color = TargetColor.copy(alpha = alpha * 0.4f),
+                    color = TargetColor.copy(alpha = alpha * 0.35f),
                     radius = ringRadius,
                     center = pos,
-                    style = Stroke(width = 2f)
+                    style = Stroke(width = 1.5f)
                 )
 
-                // Dwell progress arc (active corner only)
+                // Dwell progress arc
                 if (isActive && state.dwellProgress > 0f) {
                     drawArc(
-                        color = RingColor,
+                        color = TargetColor,
                         startAngle = -90f,
                         sweepAngle = 360f * state.dwellProgress,
                         useCenter = false,
@@ -110,45 +112,31 @@ fun CalibrationScreen(
                 }
 
                 // Center dot
-                drawCircle(
-                    color = TargetColor.copy(alpha = alpha),
-                    radius = dotRadius,
-                    center = pos
-                )
-                drawCircle(
-                    color = Color.White.copy(alpha = alpha),
-                    radius = dotRadius * 0.4f,
-                    center = pos
-                )
+                drawCircle(color = TargetColor.copy(alpha = alpha), radius = dotRadius, center = pos)
+                drawCircle(color = Color.White.copy(alpha = alpha), radius = dotRadius * 0.35f, center = pos)
             }
         }
 
         // Face indicator
         FaceIndicator(
             faceDetected = faceDetected,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(12.dp)
+            modifier = Modifier.align(Alignment.TopEnd).padding(12.dp)
         )
 
-        // Step progress dots at bottom
+        // Step progress dots
         Text(
             text = (0..3).joinToString("  ") { if (it < state.step) "●" else if (it == state.step) "◉" else "○" },
-            color = Color(0xFF00BFFF),
+            color = TargetColor,
             fontSize = 20.sp,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 32.dp)
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 36.dp)
         )
 
-        // Debug toggle
+        // Gear icon → settings overlay
         TextButton(
-            onClick = onToggleDebug,
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(4.dp)
+            onClick = { settingsOpen = true },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp)
         ) {
-            Text(if (debugMode) "⬛ Debug" else "□ Debug", color = Color(0xFF00FF88), fontSize = 12.sp)
+            Text("⚙", color = Color(0xFF4A7A9A), fontSize = 22.sp)
         }
 
         // Debug overlay
@@ -162,10 +150,19 @@ fun CalibrationScreen(
                 accelerator = accelerator,
                 faceDetected = faceDetected,
                 appState = state,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(12.dp)
+                modifier = Modifier.align(Alignment.TopStart).padding(12.dp)
             )
         }
+    }
+
+    if (settingsOpen) {
+        SettingsOverlay(
+            accelerator = accelerator,
+            inferenceMs = inferenceMs,
+            debugMode = debugMode,
+            onToggleDebug = onToggleDebug,
+            onRecalibrate = { /* no-op during calibration */ },
+            onClose = { settingsOpen = false }
+        )
     }
 }

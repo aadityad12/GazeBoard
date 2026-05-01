@@ -1,9 +1,11 @@
 package com.gazeboard.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,6 +17,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -26,11 +32,12 @@ import com.gazeboard.state.AppState
 import com.gazeboard.ui.components.DebugOverlay
 import com.gazeboard.ui.components.NpuBadge
 import com.gazeboard.ui.components.QuadrantCell
+import com.gazeboard.ui.components.SettingsOverlay
 
-private val ScreenBg = Color(0xFF060E1A)
-private val SentenceBarBg = Color(0xFF0D1B2A)
-private val SentenceTextColor = Color(0xFFB0C8E0)
-private val DividerColor = Color(0xFF1A3050)
+private val ScreenBg       = Color(0xFF030B14)
+private val SentenceBarBg  = Color(0xFF0A1422)
+private val SentenceText   = Color(0xFFB0C8E0)
+private val DividerColor   = Color(0xFF0F2035)
 
 /**
  * Quick Phrases home screen.
@@ -39,7 +46,7 @@ private val DividerColor = Color(0xFF1A3050)
  *   1 = YES    2 = NO
  *   3 = HELP   4 = MORE ► (navigate to Spell mode)
  *
- * User looks at a quadrant for 1 second to trigger it.
+ * Gear icon (⚙) opens the SettingsOverlay for debug toggle and recalibrate.
  */
 @Composable
 fun QuickPhrasesScreen(
@@ -57,16 +64,17 @@ fun QuickPhrasesScreen(
     onPreviewSurfaceReady: ((Any) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    var settingsOpen by remember { mutableStateOf(false) }
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(ScreenBg)
             .systemBarsPadding()
     ) {
-        // Sentence bar + NPU badge
         SentenceBar(sentence = state.sentence, accelerator = accelerator, inferenceMs = inferenceMs)
 
-        // Top row
+        // Top row: YES | NO
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             QuadrantCell(
                 label = "YES",
@@ -85,7 +93,7 @@ fun QuickPhrasesScreen(
 
         Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(DividerColor))
 
-        // Bottom row
+        // Bottom row: HELP | MORE
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             QuadrantCell(
                 label = "HELP",
@@ -104,21 +112,18 @@ fun QuickPhrasesScreen(
         }
     }
 
-    // Overlay: face indicator, recalibrate, debug toggle, debug panel
+    // Floating overlays
     Box(modifier = Modifier.fillMaxSize().systemBarsPadding().padding(12.dp)) {
         FaceIndicator(faceDetected = faceDetected, modifier = Modifier.align(Alignment.TopEnd))
+
+        // Gear icon → settings overlay
         TextButton(
-            onClick = onRecalibrate,
+            onClick = { settingsOpen = true },
             modifier = Modifier.align(Alignment.BottomEnd)
         ) {
-            Text("↺ Recalibrate", color = Color(0xFF8AAECA), fontSize = 12.sp)
+            Text("⚙", color = Color(0xFF4A7A9A), fontSize = 22.sp)
         }
-        TextButton(
-            onClick = onToggleDebug,
-            modifier = Modifier.align(Alignment.BottomStart)
-        ) {
-            Text(if (debugMode) "⬛ Debug" else "□ Debug", color = Color(0xFF00FF88), fontSize = 12.sp)
-        }
+
         if (debugMode) {
             DebugOverlay(
                 fps = fps,
@@ -133,29 +138,40 @@ fun QuickPhrasesScreen(
             )
         }
     }
+
+    if (settingsOpen) {
+        SettingsOverlay(
+            accelerator = accelerator,
+            inferenceMs = inferenceMs,
+            debugMode = debugMode,
+            onToggleDebug = onToggleDebug,
+            onRecalibrate = onRecalibrate,
+            onClose = { settingsOpen = false }
+        )
+    }
 }
 
 @Composable
 fun SentenceBar(sentence: String, accelerator: String, inferenceMs: Long) {
-    Box(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(SentenceBarBg)
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(
             text = if (sentence.isBlank()) "— speak a phrase or spell a word —" else sentence,
-            color = if (sentence.isBlank()) SentenceTextColor.copy(alpha = 0.5f) else SentenceTextColor,
+            color = if (sentence.isBlank()) SentenceText.copy(alpha = 0.4f) else SentenceText,
             fontSize = 16.sp,
             fontWeight = FontWeight.Normal,
             textAlign = TextAlign.Start,
-            modifier = Modifier.align(Alignment.CenterStart).padding(end = 130.dp)
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 8.dp)
         )
-        NpuBadge(
-            accelerator = accelerator,
-            inferenceMs = inferenceMs,
-            modifier = Modifier.align(Alignment.CenterEnd)
-        )
+        NpuBadge(accelerator = accelerator, inferenceMs = inferenceMs)
     }
 }
 
@@ -164,7 +180,7 @@ fun FaceIndicator(faceDetected: Boolean, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .background(
-                color = if (faceDetected) Color(0xFF1A4A1A) else Color(0xFF4A1A1A),
+                color = if (faceDetected) Color(0xFF0F2D0F) else Color(0xFF2D0F0F),
                 shape = RoundedCornerShape(4.dp)
             )
             .padding(horizontal = 8.dp, vertical = 4.dp)
