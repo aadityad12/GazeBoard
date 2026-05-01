@@ -2,7 +2,7 @@
 
 ## Project Summary
 
-GazeBoard is a real-time, fully on-device eye-gaze AAC (Augmentative and Alternative Communication) board for people with ALS, locked-in syndrome, or severe motor disabilities. The user communicates by looking at one of 4 large screen quadrants. The app detects gaze direction via a two-stage pipeline — ML Kit face detection crops the eye region, then the **EyeGaze model** (`qualcomm/EyeGaze`) estimates pitch and yaw angles on the NPU via LiteRT's CompiledModel API. Gaze angles are mapped to quadrants after 4-corner calibration. Two screens: Quick Phrases (Yes/No/Help/More) and Spell Mode (letter groups + T9-style word prediction). Built for the **Qualcomm × LiteRT Developer Hackathon, April 30–May 1, 2026**.
+GazeBoard is a real-time, fully on-device eye-gaze AAC (Augmentative and Alternative Communication) board for people with ALS, locked-in syndrome, or severe motor disabilities. The user communicates by looking at one of 4 large screen quadrants. The app detects gaze direction via a two-stage pipeline — ML Kit face detection crops the left eye region, then the **EyeGaze model** (`qualcomm/EyeGaze`) estimates pitch and yaw angles on the NPU via LiteRT's CompiledModel API. Gaze angles are mapped to quadrants after 4-corner calibration. Two screens: Quick Phrases (Yes/No/Help/More) and Spell Mode (letter groups + T9-style word prediction). Built for the **Qualcomm × LiteRT Developer Hackathon, April 30–May 1, 2026**.
 
 ---
 
@@ -59,7 +59,7 @@ GazeBoard is a real-time, fully on-device eye-gaze AAC (Augmentative and Alterna
 | Face detection | `com.google.mlkit:face-detection` | 16.1.7 |
 | TTS | Android TextToSpeech | framework |
 | State | ViewModel + StateFlow | Jetpack lifecycle |
-| minSdk | 26 | Android 8.0 |
+| minSdk | 31 | Android 12 |
 | compileSdk | 35 | |
 | Target device | Samsung Galaxy S25 Ultra | Snapdragon 8 Elite (SM8750) |
 
@@ -156,8 +156,6 @@ GazeBoard/
                 └── components/
                     ├── QuadrantCell.kt    — animated dwell-ring cell
                     ├── NpuBadge.kt        — accelerator + latency overlay badge
-                    ├── GazeCursor.kt      — gaze cursor (pixel coordinates)
-                    ├── CameraPreviewPip.kt — PiP camera preview with eye overlay
                     └── DebugOverlay.kt    — live debug panel (FPS, latencies, pitch/yaw)
 ```
 
@@ -182,6 +180,6 @@ $ADB shell am start -n com.gazeboard/.MainActivity
 | NPU fails at runtime (`Failed to compile model`) | App shows `ModelErrorScreen` with Retry button — no silent CPU fallback. If NPU is unavailable on device, this is visible. |
 | Face not detected if phone tilted | ML Kit handles rotation; frame is rotated upright before inference |
 | Gaze jitter | EMA smoothing α=0.7; 1s dwell threshold prevents accidental selection |
-| Calibration needed on every demo | CalibrationEngine persists pitchMid/yawMid in SharedPreferences; re-calibrate button on main screen |
+| Calibration needed on every demo | CalibrationEngine persists pitchMid/yawMid in SharedPreferences; recalibrate button in settings overlay on each screen |
 | Left-side gaze detection weaker | Known issue — see `docs/GAZE_ISSUES.md` for root cause analysis |
 | Demo device crash | Pre-record backup video before demo |

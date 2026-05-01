@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -61,7 +60,6 @@ fun QuickPhrasesScreen(
     faceDetectMs: Long = 0L,
     rawPitch: Float = 0f,
     rawYaw: Float = 0f,
-    onPreviewSurfaceReady: ((Any) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var settingsOpen by remember { mutableStateOf(false) }

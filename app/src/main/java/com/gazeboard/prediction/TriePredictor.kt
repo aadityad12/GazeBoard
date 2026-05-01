@@ -6,9 +6,9 @@ import android.util.Log
 /**
  * Dictionary-based word predictor.
  *
- * Loads words.txt from assets (5000 most common English words, frequency-sorted).
+ * Loads words.txt from assets (~300 ALS-focused words).
  * Precomputes gesture codes for every word at init time. predict() is O(n) filter
- * over the precomputed list — fast enough for 5000 words on every frame.
+ * over the precomputed list.
  */
 class TriePredictor(context: Context) : WordPredictor {
 
