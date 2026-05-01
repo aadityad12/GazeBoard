@@ -47,28 +47,33 @@ class EyeGazeModel(private val context: Context) {
     fun load() {
         close()
 
-        val candidates = listOf(
-            "NPU" to { CompiledModel.create(context.assets, MODEL_ASSET,
-                CompiledModel.Options(Accelerator.NPU, Accelerator.GPU)) },
-            "CPU" to { CompiledModel.create(context.assets, MODEL_ASSET) }
+        // NPU-only: no CPU/GPU fallback. If NPU is unavailable the exception
+        // propagates to GazeBoardViewModel which shows ModelLoadError instead of
+        // silently degrading to CPU inference.
+        val mdl = CompiledModel.create(
+            context.assets,
+            MODEL_ASSET,
+            CompiledModel.Options(Accelerator.NPU)
         )
+        model = mdl
+        val inputs  = mdl.createInputBuffers()
+        val outputs = mdl.createOutputBuffers()
+        inputBuffers  = inputs
+        outputBuffers = outputs
+        acceleratorName = "NPU"
+        Log.i(TAG, "EyeGaze model loaded on NPU via CompiledModel API")
 
-        var lastException: Exception? = null
-        for ((label, factory) in candidates) {
-            try {
-                val mdl = factory()
-                model = mdl
-                inputBuffers = mdl.createInputBuffers()
-                outputBuffers = mdl.createOutputBuffers()
-                acceleratorName = label
-                Log.i(TAG, "EyeGaze model loaded on $label via CompiledModel API")
-                return
-            } catch (e: Exception) {
-                Log.w(TAG, "EyeGaze: $label failed (${e.message}), trying next")
-                lastException = e
-            }
+        // Warm-up: triggers LiteRT JIT compilation for the Hexagon DSP and
+        // caches the compiled kernel to disk. Subsequent runs skip recompilation.
+        try {
+            val warmInput = FloatArray(INPUT_SIZE) { 0f }
+            inputs[0].writeFloat(warmInput)
+            val t0 = SystemClock.elapsedRealtime()
+            mdl.run(inputs, outputs)
+            Log.i(TAG, "NPU JIT warm-up complete: ${SystemClock.elapsedRealtime() - t0}ms")
+        } catch (e: Exception) {
+            Log.w(TAG, "Warm-up failed (non-fatal): ${e.message}")
         }
-        throw lastException ?: IllegalStateException("All accelerators failed")
     }
 
     fun runInference(inputBuffer: FloatBuffer): GazeAngles? {

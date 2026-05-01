@@ -48,6 +48,26 @@ class GazeBoardViewModel : ViewModel() {
     private val _faceDetected = MutableStateFlow(false)
     val faceDetected: StateFlow<Boolean> = _faceDetected.asStateFlow()
 
+    // Debug mode overlay
+    private val _debugMode = MutableStateFlow(false)
+    val debugMode: StateFlow<Boolean> = _debugMode.asStateFlow()
+
+    private val _faceDetectMs = MutableStateFlow(0L)
+    val faceDetectMs: StateFlow<Long> = _faceDetectMs.asStateFlow()
+
+    private val _rawPitch = MutableStateFlow(0f)
+    val rawPitch: StateFlow<Float> = _rawPitch.asStateFlow()
+
+    private val _rawYaw = MutableStateFlow(0f)
+    val rawYaw: StateFlow<Float> = _rawYaw.asStateFlow()
+
+    private val _fps = MutableStateFlow(0f)
+    val fps: StateFlow<Float> = _fps.asStateFlow()
+
+    private val frameTimestamps = ArrayDeque<Long>()
+
+    fun toggleDebugMode() { _debugMode.update { !it } }
+
     // Dwell tracking
     private var currentDwellQuadrant: Int? = null
     private var dwellStartMs: Long = 0L
@@ -88,7 +108,9 @@ class GazeBoardViewModel : ViewModel() {
                 eyeGazeModel.load()
                 Log.i(TAG, "EyeGaze model ready on ${eyeGazeModel.acceleratorName}")
             } catch (e: Exception) {
-                Log.e(TAG, "Model load failed — inference disabled: ${e.message}")
+                Log.e(TAG, "NPU model load failed: ${e.message}")
+                _appState.value = AppState.ModelLoadError(e.message ?: "NPU unavailable")
+                return@launch
             }
 
             cameraManager = CameraManager(context, eyeGazeModel, gazeEstimator, calibrationEngine, this@GazeBoardViewModel)
@@ -115,6 +137,18 @@ class GazeBoardViewModel : ViewModel() {
         _inferenceMs.value = result.inferenceMs
         _accelerator.value = result.accelerator
         _faceDetected.value = result.quadrant != 0
+        _faceDetectMs.value = result.faceDetectMs
+        _rawPitch.value = result.rawPitch
+        _rawYaw.value = result.rawYaw
+
+        // Rolling FPS over last 10 frames
+        val now = SystemClock.elapsedRealtime()
+        frameTimestamps.addLast(now)
+        if (frameTimestamps.size > 10) frameTimestamps.removeFirst()
+        if (frameTimestamps.size >= 2) {
+            val windowMs = frameTimestamps.last() - frameTimestamps.first()
+            if (windowMs > 0) _fps.value = (frameTimestamps.size - 1) * 1000f / windowMs
+        }
 
         val state = _appState.value
 
@@ -123,6 +157,7 @@ class GazeBoardViewModel : ViewModel() {
             is AppState.QuickPhrases, is AppState.Spelling, is AppState.WordSelection -> {
                 handleDwellGaze(result.quadrant)
             }
+            is AppState.ModelLoadError -> Unit
         }
     }
 

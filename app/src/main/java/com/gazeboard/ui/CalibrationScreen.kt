@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -20,6 +21,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gazeboard.state.AppState
+import com.gazeboard.ui.components.DebugOverlay
 
 private val ScreenBg = Color(0xFF060E1A)
 private val TargetColor = Color(0xFF00BFFF)
@@ -36,6 +38,14 @@ private val RingColor = Color(0xFF00BFFF)
 fun CalibrationScreen(
     state: AppState.Calibrating,
     faceDetected: Boolean,
+    debugMode: Boolean = false,
+    onToggleDebug: () -> Unit = {},
+    fps: Float = 0f,
+    inferenceMs: Long = 0L,
+    faceDetectMs: Long = 0L,
+    rawPitch: Float = 0f,
+    rawYaw: Float = 0f,
+    accelerator: String = "—",
     modifier: Modifier = Modifier
 ) {
     val cornerNames = listOf("Top-Left", "Top-Right", "Bottom-Left", "Bottom-Right")
@@ -130,5 +140,32 @@ fun CalibrationScreen(
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 32.dp)
         )
+
+        // Debug toggle
+        TextButton(
+            onClick = onToggleDebug,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(4.dp)
+        ) {
+            Text(if (debugMode) "⬛ Debug" else "□ Debug", color = Color(0xFF00FF88), fontSize = 12.sp)
+        }
+
+        // Debug overlay
+        if (debugMode) {
+            DebugOverlay(
+                fps = fps,
+                inferenceMs = inferenceMs,
+                faceDetectMs = faceDetectMs,
+                rawPitch = rawPitch,
+                rawYaw = rawYaw,
+                accelerator = accelerator,
+                faceDetected = faceDetected,
+                appState = state,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(12.dp)
+            )
+        }
     }
 }

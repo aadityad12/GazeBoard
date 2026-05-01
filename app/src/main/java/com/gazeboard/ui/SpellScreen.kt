@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -20,6 +21,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gazeboard.state.AppState
+import com.gazeboard.ui.components.DebugOverlay
 import com.gazeboard.ui.components.QuadrantCell
 
 private val ScreenBg = Color(0xFF060E1A)
@@ -45,6 +47,13 @@ fun SpellScreen(
     accelerator: String,
     inferenceMs: Long,
     faceDetected: Boolean,
+    onRecalibrate: () -> Unit = {},
+    debugMode: Boolean = false,
+    onToggleDebug: () -> Unit = {},
+    fps: Float = 0f,
+    faceDetectMs: Long = 0L,
+    rawPitch: Float = 0f,
+    rawYaw: Float = 0f,
     modifier: Modifier = Modifier
 ) {
     val isWordSelection = state is AppState.WordSelection
@@ -121,6 +130,31 @@ fun SpellScreen(
 
     Box(modifier = Modifier.fillMaxSize().systemBarsPadding().padding(12.dp)) {
         FaceIndicator(faceDetected = faceDetected, modifier = Modifier.align(Alignment.TopEnd))
+        TextButton(
+            onClick = onRecalibrate,
+            modifier = Modifier.align(Alignment.BottomEnd)
+        ) {
+            Text("↺ Recalibrate", color = Color(0xFF8AAECA), fontSize = 12.sp)
+        }
+        TextButton(
+            onClick = onToggleDebug,
+            modifier = Modifier.align(Alignment.BottomStart)
+        ) {
+            Text(if (debugMode) "⬛ Debug" else "□ Debug", color = Color(0xFF00FF88), fontSize = 12.sp)
+        }
+        if (debugMode) {
+            DebugOverlay(
+                fps = fps,
+                inferenceMs = inferenceMs,
+                faceDetectMs = faceDetectMs,
+                rawPitch = rawPitch,
+                rawYaw = rawYaw,
+                accelerator = accelerator,
+                faceDetected = faceDetected,
+                appState = state,
+                modifier = Modifier.align(Alignment.TopStart)
+            )
+        }
     }
 }
 

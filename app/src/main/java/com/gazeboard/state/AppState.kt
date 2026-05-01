@@ -30,4 +30,7 @@ sealed class AppState {
         val dwellProgress: Float = 0f,
         val sentence: String = ""
     ) : AppState()
+
+    /** NPU model failed to load — shown instead of silently falling back to CPU. */
+    data class ModelLoadError(val message: String) : AppState()
 }

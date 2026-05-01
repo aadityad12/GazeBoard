@@ -23,6 +23,7 @@ import androidx.core.view.WindowCompat
 import com.gazeboard.state.AppState
 import com.gazeboard.state.GazeBoardViewModel
 import com.gazeboard.ui.CalibrationScreen
+import com.gazeboard.ui.ModelErrorScreen
 import com.gazeboard.ui.QuickPhrasesScreen
 import com.gazeboard.ui.SpellScreen
 import com.gazeboard.ui.theme.GazeBoardTheme
@@ -41,6 +42,11 @@ class MainActivity : ComponentActivity() {
                 val inferenceMs  by viewModel.inferenceMs.collectAsState()
                 val accelerator  by viewModel.accelerator.collectAsState()
                 val faceDetected by viewModel.faceDetected.collectAsState()
+                val debugMode    by viewModel.debugMode.collectAsState()
+                val faceDetectMs by viewModel.faceDetectMs.collectAsState()
+                val rawPitch     by viewModel.rawPitch.collectAsState()
+                val rawYaw       by viewModel.rawYaw.collectAsState()
+                val fps          by viewModel.fps.collectAsState()
 
                 val permissionLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestPermission()
@@ -60,19 +66,45 @@ class MainActivity : ComponentActivity() {
                 when (val state = appState) {
                     is AppState.Calibrating -> CalibrationScreen(
                         state = state,
-                        faceDetected = faceDetected
+                        faceDetected = faceDetected,
+                        debugMode = debugMode,
+                        onToggleDebug = { viewModel.toggleDebugMode() },
+                        fps = fps,
+                        inferenceMs = inferenceMs,
+                        faceDetectMs = faceDetectMs,
+                        rawPitch = rawPitch,
+                        rawYaw = rawYaw,
+                        accelerator = accelerator
                     )
                     is AppState.QuickPhrases -> QuickPhrasesScreen(
                         state = state,
                         accelerator = accelerator,
                         inferenceMs = inferenceMs,
-                        faceDetected = faceDetected
+                        faceDetected = faceDetected,
+                        onRecalibrate = { viewModel.startRecalibration() },
+                        debugMode = debugMode,
+                        onToggleDebug = { viewModel.toggleDebugMode() },
+                        fps = fps,
+                        faceDetectMs = faceDetectMs,
+                        rawPitch = rawPitch,
+                        rawYaw = rawYaw
                     )
                     is AppState.Spelling, is AppState.WordSelection -> SpellScreen(
                         state = state,
                         accelerator = accelerator,
                         inferenceMs = inferenceMs,
-                        faceDetected = faceDetected
+                        faceDetected = faceDetected,
+                        onRecalibrate = { viewModel.startRecalibration() },
+                        debugMode = debugMode,
+                        onToggleDebug = { viewModel.toggleDebugMode() },
+                        fps = fps,
+                        faceDetectMs = faceDetectMs,
+                        rawPitch = rawPitch,
+                        rawYaw = rawYaw
+                    )
+                    is AppState.ModelLoadError -> ModelErrorScreen(
+                        state = state,
+                        onRetry = { viewModel.onCameraPermissionGranted(this@MainActivity, this@MainActivity) }
                     )
                 }
             }

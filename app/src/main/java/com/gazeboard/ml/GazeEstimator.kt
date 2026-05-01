@@ -50,12 +50,13 @@ class GazeEstimator {
         }
 
         return GazeResult(
-            quadrant    = quadrant,
-            confidence  = 1.0f,
-            inferenceMs = eyeGazeModel.lastInferenceMs,
-            accelerator = eyeGazeModel.acceleratorName,
-            rawPitch    = angles.pitch,
-            rawYaw      = angles.yaw
+            quadrant     = quadrant,
+            confidence   = 1.0f,
+            inferenceMs  = eyeGazeModel.lastInferenceMs,
+            accelerator  = eyeGazeModel.acceleratorName,
+            rawPitch     = angles.pitch,
+            rawYaw       = angles.yaw,
+            faceDetectMs = detectResult.detectMs
         )
     }
 
@@ -92,6 +93,7 @@ class GazeEstimator {
         val inferenceMs: Long,
         val accelerator: String,
         val rawPitch: Float = 0f,
-        val rawYaw: Float = 0f
+        val rawYaw: Float = 0f,
+        val faceDetectMs: Long = 0L
     )
 }
