@@ -71,8 +71,8 @@ dependencies {
     // This is the pass/fail gate for the hackathon — do not change to tflite-task-vision
     implementation("com.google.ai.edge.litert:litert:2.1.4")
 
-    // LiteRT Qualcomm backend — enables Accelerator.NPU via CompiledModel API on SM8750 (Hexagon)
-    implementation("com.google.ai.edge.litert:litert-qualcomm:2.1.0")
+    // LiteRT Qualcomm QNN backend — enables Accelerator.NPU via CompiledModel API on SM8750 (Hexagon)
+    implementation("com.qualcomm.qti:qnn-litert-delegate:2.34.0")
 
     // CameraX
     val cameraxVersion = "1.3.4"

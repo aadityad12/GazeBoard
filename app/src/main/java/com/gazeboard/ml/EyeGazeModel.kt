@@ -47,27 +47,11 @@ class EyeGazeModel(private val context: Context) {
 
     fun load() {
         // Try accelerators in priority order: NPU+GPU → GPU → CPU
-        // Uses Builder API per LiteRT CompiledModel spec — CompiledModel.Options.Builder
+        // CompiledModel.Options vararg constructor is the valid form in litert:2.1.x
         val candidates = listOf(
-            "NPU+GPU" to {
-                CompiledModel.create(
-                    context.assets, MODEL_ASSET,
-                    CompiledModel.Options.Builder()
-                        .setAccelerator(Accelerator.NPU, Accelerator.GPU)
-                        .build()
-                )
-            },
-            "GPU" to {
-                CompiledModel.create(
-                    context.assets, MODEL_ASSET,
-                    CompiledModel.Options.Builder()
-                        .setAccelerator(Accelerator.GPU)
-                        .build()
-                )
-            },
-            "CPU" to {
-                CompiledModel.create(context.assets, MODEL_ASSET)
-            }
+            "NPU+GPU" to { CompiledModel.create(context.assets, MODEL_ASSET, CompiledModel.Options(Accelerator.NPU, Accelerator.GPU)) },
+            "GPU"     to { CompiledModel.create(context.assets, MODEL_ASSET, CompiledModel.Options(Accelerator.GPU)) },
+            "CPU"     to { CompiledModel.create(context.assets, MODEL_ASSET) }
         )
 
         var lastException: Exception? = null
