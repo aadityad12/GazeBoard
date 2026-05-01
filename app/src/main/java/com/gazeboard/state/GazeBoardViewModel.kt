@@ -1,278 +1,348 @@
 package com.gazeboard.state
 
-import android.app.Application
+import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import androidx.camera.core.Preview
-import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.gazeboard.GazeBoardApplication
 import com.gazeboard.audio.TtsManager
 import com.gazeboard.calibration.CalibrationEngine
 import com.gazeboard.camera.CameraManager
 import com.gazeboard.ml.EyeGazeModel
 import com.gazeboard.ml.GazeEstimator
+import com.gazeboard.prediction.TriePredictor
+import com.gazeboard.prediction.WordPredictor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-class GazeBoardViewModel(application: Application) : AndroidViewModel(application) {
+/**
+ * Central ViewModel for GazeBoard.
+ *
+ * State machine:
+ *   Calibrating(step 0-3) → QuickPhrases → Spelling ↔ WordSelection
+ *
+ * Dwell logic: 1 second on same quadrant triggers selection.
+ * 500ms cooldown after selection prevents double-triggers.
+ */
+class GazeBoardViewModel : ViewModel() {
 
-    private val _appState = MutableStateFlow<AppState>(AppState.Initializing)
+    private val _appState = MutableStateFlow<AppState>(AppState.Calibrating())
     val appState: StateFlow<AppState> = _appState.asStateFlow()
 
-    private val _gazePoint = MutableStateFlow<Pair<Float, Float>?>(null)
-    val gazePoint: StateFlow<Pair<Float, Float>?> = _gazePoint.asStateFlow()
-
-    private val _dwellingCellIndex = MutableStateFlow(-1)
-    val dwellingCellIndex: StateFlow<Int> = _dwellingCellIndex.asStateFlow()
-
-    private val _dwellProgress = MutableStateFlow(0f)
-    val dwellProgress: StateFlow<Float> = _dwellProgress.asStateFlow()
-
-    private val _lastSpokenPhrase = MutableStateFlow<String?>(null)
-    val lastSpokenPhrase: StateFlow<String?> = _lastSpokenPhrase.asStateFlow()
-
+    // Telemetry for NPU badge
     private val _inferenceMs = MutableStateFlow(0L)
     val inferenceMs: StateFlow<Long> = _inferenceMs.asStateFlow()
 
-    private val _acceleratorName = MutableStateFlow("—")
-    val acceleratorName: StateFlow<String> = _acceleratorName.asStateFlow()
+    private val _accelerator = MutableStateFlow("—")
+    val accelerator: StateFlow<String> = _accelerator.asStateFlow()
 
-    // Reactive calibration target index — fixes non-reactive direct property read bug
-    private val _calibTargetIndex = MutableStateFlow(0)
-    val calibTargetIndex: StateFlow<Int> = _calibTargetIndex.asStateFlow()
-
-    // Face detection state for overlay and "no face" warning
     private val _faceDetected = MutableStateFlow(false)
     val faceDetected: StateFlow<Boolean> = _faceDetected.asStateFlow()
 
-    // Normalized eye center [0,1] for camera PiP overlay dot
-    private val _eyeCenterNorm = MutableStateFlow<Pair<Float, Float>?>(null)
-    val eyeCenterNorm: StateFlow<Pair<Float, Float>?> = _eyeCenterNorm.asStateFlow()
+    // Dwell tracking
+    private var currentDwellQuadrant: Int? = null
+    private var dwellStartMs: Long = 0L
+    private var inCooldown = false
 
-    // ML Kit face detection latency for pipeline stats display
-    private val _faceDetectMs = MutableStateFlow(0L)
-    val faceDetectMs: StateFlow<Long> = _faceDetectMs.asStateFlow()
+    private lateinit var eyeGazeModel: EyeGazeModel
+    private lateinit var gazeEstimator: GazeEstimator
+    private lateinit var calibrationEngine: CalibrationEngine
+    private lateinit var cameraManager: CameraManager
+    private lateinit var ttsManager: TtsManager
+    private lateinit var wordPredictor: WordPredictor
 
-    // Exposed to composables so PreviewView can call setSurfaceProvider().
-    // Created here (not in CameraManager) so it's always available before camera starts.
-    val cameraPreview: Preview = Preview.Builder().build()
+    // Quick phrases for home screen (quadrant 1-3)
+    val quickPhrases = listOf("Yes", "No", "Help")
 
-    val eyeGazeModel = EyeGazeModel(application)
-    val gazeEstimator = GazeEstimator()
-    val calibEngine = CalibrationEngine()
-    val ttsManager = TtsManager(application)
+    // Calibration corner labels (shown in CalibrationScreen)
+    val calibrationCorners = listOf("Top-Left", "Top-Right", "Bottom-Left", "Bottom-Right")
 
-    private var cameraManager: CameraManager? = null
-
-    val phrases = listOf("Yes", "No", "Help", "Thank you", "I need water", "I'm in pain")
-
-    private val dwellDurationMs = 1500L
-    private val calibrationDwellMs = 2000L
-
-    private var dwellStartMs = 0L
-    private var currentDwellCell = -1
-    private var calibDwellStartMs = 0L
-    private var screenW = 1080f
-    private var screenH = 2400f
-
-    private val calibrationPrompts = listOf(
-        "Look at the top left corner",
-        "Look at the top right corner",
-        "Look at the bottom left corner",
-        "Look at the bottom right corner"
-    )
-
-    init {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                eyeGazeModel.load()
-                _acceleratorName.value = eyeGazeModel.acceleratorName
-                ttsManager.init()
-                _appState.value = AppState.NeedsPermission
-                Log.i(TAG, "Model loaded on ${eyeGazeModel.acceleratorName}")
-            } catch (e: Exception) {
-                _appState.value = AppState.Error("Model load failed: ${e.message}")
-                Log.e(TAG, "Model load failed", e)
-            }
-        }
-    }
-
-    fun setScreenSize(w: Float, h: Float) {
-        screenW = w
-        screenH = h
-        calibEngine.setScreenSize(w, h)
-    }
-
-    /**
-     * Called once after camera permission is granted. Creates CameraManager if not yet created.
-     * Always restarts calibration so the user calibrates on every fresh camera start.
-     */
-    fun onCameraPermissionGranted(lifecycleOwner: LifecycleOwner) {
-        startCalibration()
-        if (cameraManager == null) {
-            cameraManager = CameraManager(
-                getApplication(),
-                cameraPreview,
-                eyeGazeModel,
-                gazeEstimator,
-                this
-            ).also { it.start(lifecycleOwner) }
-        }
-    }
-
-    /**
-     * Called from MainActivity.onResume(). Forces recalibration every time the app
-     * comes to foreground so gaze accuracy is always fresh.
-     * CameraX lifecycle handles camera resume automatically — no explicit rebind needed.
-     */
-    fun onActivityResumed(lifecycleOwner: LifecycleOwner) {
-        when (_appState.value) {
-            AppState.Board, AppState.Calibrating -> startCalibration()
-            else -> Unit  // Initializing / NeedsPermission / Error — don't interrupt
-        }
-    }
-
-    fun startCalibration() {
-        val margin = 80f
-        calibDwellStartMs = 0L
-        calibEngine.reset()
-        gazeEstimator.reset()
-        calibEngine.setScreenSize(screenW, screenH)
-        calibEngine.setCalibrationTargets(
-            listOf(
-                CalibrationEngine.CalibPoint(margin, margin),
-                CalibrationEngine.CalibPoint(screenW - margin, margin),
-                CalibrationEngine.CalibPoint(margin, screenH - margin),
-                CalibrationEngine.CalibPoint(screenW - margin, screenH - margin)
-            )
-        )
-        _calibTargetIndex.value = 0
-        _appState.value = AppState.Calibrating
-        _gazePoint.value = null
-        _eyeCenterNorm.value = null
-        resetDwell()
-
-        // Brief delay so the calibration screen renders before TTS fires
-        viewModelScope.launch {
-            delay(400L)
-            ttsManager.speak(calibrationPrompts[0])
-        }
-    }
-
-    fun onGazeUpdate(
-        gazeResult: GazeEstimator.GazeResult?,
-        inferenceMs: Long,
-        accelerator: String
-    ) {
-        _inferenceMs.value = inferenceMs
-        _acceleratorName.value = accelerator
-        _faceDetected.value = gazeResult != null
-
-        if (gazeResult == null) {
-            _gazePoint.value = null
-            _eyeCenterNorm.value = null
-            resetDwell()
-            return
-        }
-
-        _eyeCenterNorm.value = Pair(gazeResult.eyeCenterNormX, gazeResult.eyeCenterNormY)
-        _faceDetectMs.value = gazeResult.faceDetectMs
-
-        when (_appState.value) {
-            AppState.Calibrating -> handleCalibrationFrame(gazeResult)
-            AppState.Board -> handleBoardFrame(gazeResult)
-            else -> Unit
-        }
-    }
-
-    private fun handleCalibrationFrame(gaze: GazeEstimator.GazeResult) {
-        calibEngine.accumulateSample(gaze.pitch, gaze.yaw)
-
-        if (calibDwellStartMs == 0L) {
-            calibDwellStartMs = SystemClock.elapsedRealtime()
-        }
-
-        val elapsed = SystemClock.elapsedRealtime() - calibDwellStartMs
-        _dwellProgress.value = (elapsed / calibrationDwellMs.toFloat()).coerceIn(0f, 1f)
-
-        if (elapsed >= calibrationDwellMs) {
-            calibDwellStartMs = 0L
-            _dwellProgress.value = 0f
-
-            val done = calibEngine.commitCurrentTarget()
-            _calibTargetIndex.value = calibEngine.currentTargetIndex
-
-            if (done) {
-                _appState.value = AppState.Board
-                viewModelScope.launch {
-                    ttsManager.speak("Calibration complete")
-                }
-            } else {
-                // Speak the next corner prompt
-                calibrationPrompts.getOrNull(calibEngine.currentTargetIndex)?.let { prompt ->
-                    viewModelScope.launch { ttsManager.speak(prompt) }
-                }
-            }
-        }
-    }
-
-    private fun handleBoardFrame(gaze: GazeEstimator.GazeResult) {
-        val screenPt = calibEngine.toScreenPoint(gaze.pitch, gaze.yaw) ?: return
-        _gazePoint.value = screenPt
-
-        val gazedCell = hitTestCell(screenPt.first, screenPt.second)
-        if (gazedCell != currentDwellCell) {
-            currentDwellCell = gazedCell
-            dwellStartMs = SystemClock.elapsedRealtime()
-            _dwellingCellIndex.value = gazedCell
-            _dwellProgress.value = 0f
-            return
-        }
-
-        if (gazedCell < 0) return
-
-        val elapsed = SystemClock.elapsedRealtime() - dwellStartMs
-        _dwellProgress.value = (elapsed / dwellDurationMs.toFloat()).coerceIn(0f, 1f)
-
-        if (elapsed >= dwellDurationMs) {
-            val phrase = phrases.getOrNull(gazedCell) ?: return
-            ttsManager.speak(phrase)
-            _lastSpokenPhrase.value = phrase
-            viewModelScope.launch {
-                delay(2000L)
-                if (_lastSpokenPhrase.value == phrase) _lastSpokenPhrase.value = null
-            }
-            resetDwell()
-        }
-    }
-
-    private fun hitTestCell(sx: Float, sy: Float): Int {
-        val col = (sx / (screenW / 3f)).toInt().coerceIn(0, 2)
-        val row = (sy / (screenH / 2f)).toInt().coerceIn(0, 1)
-        return row * 3 + col
-    }
-
-    private fun resetDwell() {
-        currentDwellCell = -1
-        dwellStartMs = 0L
-        _dwellingCellIndex.value = -1
-        _dwellProgress.value = 0f
-    }
-
-    override fun onCleared() {
-        cameraManager?.stop()
-        eyeGazeModel.close()
-        gazeEstimator.close()
-        ttsManager.shutdown()
-        super.onCleared()
-    }
+    // Surface provider race: composable may set it before CameraManager is ready
+    private var pendingSurfaceProvider: Preview.SurfaceProvider? = null
 
     companion object {
         private const val TAG = "GazeBoard"
+        private const val DWELL_MS = 1000L
+        private const val COOLDOWN_MS = 500L
+        private const val CALIB_DWELL_MS = 1500L
+    }
+
+    fun onCameraPermissionGranted(context: Context, lifecycleOwner: LifecycleOwner) {
+        viewModelScope.launch(Dispatchers.IO) {
+            ttsManager = (context.applicationContext as GazeBoardApplication).ttsManager
+            wordPredictor = TriePredictor(context)
+            calibrationEngine = CalibrationEngine(context)
+            gazeEstimator = GazeEstimator()
+
+            eyeGazeModel = EyeGazeModel(context)
+            try {
+                eyeGazeModel.load()
+                Log.i(TAG, "EyeGaze model ready on ${eyeGazeModel.acceleratorName}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Model load failed — inference disabled: ${e.message}")
+            }
+
+            cameraManager = CameraManager(context, eyeGazeModel, gazeEstimator, calibrationEngine, this@GazeBoardViewModel)
+
+            withContext(Dispatchers.Main) {
+                pendingSurfaceProvider?.let { cameraManager.preview.setSurfaceProvider(it) }
+                cameraManager.start(lifecycleOwner)
+            }
+
+            // If already calibrated from prefs, skip to QuickPhrases
+            if (calibrationEngine.isCalibrated) {
+                _appState.value = AppState.QuickPhrases()
+                ttsManager.speak("GazeBoard ready. Look at Yes, No, or Help.")
+            } else {
+                ttsManager.speak("Look at the top-left corner.")
+            }
+
+            Log.i(TAG, "Camera pipeline started")
+        }
+    }
+
+    /** Called by CameraManager every frame. */
+    fun onGazeUpdate(result: GazeEstimator.GazeResult) {
+        _inferenceMs.value = result.inferenceMs
+        _accelerator.value = result.accelerator
+        _faceDetected.value = result.quadrant != 0
+
+        val state = _appState.value
+
+        when (state) {
+            is AppState.Calibrating -> handleCalibrationGaze(result, state)
+            is AppState.QuickPhrases, is AppState.Spelling, is AppState.WordSelection -> {
+                handleDwellGaze(result.quadrant)
+            }
+        }
+    }
+
+    private fun handleCalibrationGaze(result: GazeEstimator.GazeResult, state: AppState.Calibrating) {
+        if (result.quadrant == 0) return  // no face
+
+        calibrationEngine.accumulateSample(result.rawPitch, result.rawYaw)
+
+        // Track dwell for calibration corner
+        if (currentDwellQuadrant != state.step) {
+            currentDwellQuadrant = state.step
+            dwellStartMs = SystemClock.elapsedRealtime()
+            _appState.update { state.copy(dwellProgress = 0f) }
+            return
+        }
+
+        val elapsed = SystemClock.elapsedRealtime() - dwellStartMs
+        val progress = (elapsed.toFloat() / CALIB_DWELL_MS).coerceIn(0f, 1f)
+        _appState.update { state.copy(dwellProgress = progress) }
+
+        if (elapsed >= CALIB_DWELL_MS) {
+            val done = calibrationEngine.commitCorner()
+            currentDwellQuadrant = null
+            dwellStartMs = 0L
+            if (done) {
+                Log.i(TAG, "Calibration complete")
+                ttsManager.speak("Calibration complete. Look at Yes, No, or Help.")
+                _appState.value = AppState.QuickPhrases()
+            } else {
+                val nextStep = calibrationEngine.currentStep
+                val cornerName = calibrationCorners.getOrElse(nextStep) { "corner" }
+                ttsManager.speak("Look at the $cornerName corner.")
+                _appState.update { AppState.Calibrating(step = nextStep, dwellProgress = 0f) }
+            }
+        }
+    }
+
+    private fun handleDwellGaze(quadrant: Int) {
+        if (inCooldown) return
+
+        if (quadrant == 0) {
+            // Face lost — pause dwell but don't reset (brief blink tolerance)
+            updateActiveQuadrant(null, 0f)
+            return
+        }
+
+        if (quadrant != currentDwellQuadrant) {
+            // Moved to new quadrant — restart dwell timer
+            currentDwellQuadrant = quadrant
+            dwellStartMs = SystemClock.elapsedRealtime()
+            updateActiveQuadrant(quadrant, 0f)
+            return
+        }
+
+        val elapsed = SystemClock.elapsedRealtime() - dwellStartMs
+        val progress = (elapsed.toFloat() / DWELL_MS).coerceIn(0f, 1f)
+        updateActiveQuadrant(quadrant, progress)
+
+        if (elapsed >= DWELL_MS) {
+            selectQuadrant(quadrant)
+        }
+    }
+
+    private fun updateActiveQuadrant(quadrant: Int?, progress: Float) {
+        _appState.update { state ->
+            when (state) {
+                is AppState.QuickPhrases   -> state.copy(activeQuadrant = quadrant, dwellProgress = progress)
+                is AppState.Spelling       -> state.copy(activeQuadrant = quadrant, dwellProgress = progress)
+                is AppState.WordSelection  -> state.copy(activeQuadrant = quadrant, dwellProgress = progress)
+                else -> state
+            }
+        }
+    }
+
+    private fun selectQuadrant(quadrant: Int) {
+        currentDwellQuadrant = null
+        dwellStartMs = 0L
+        inCooldown = true
+
+        val state = _appState.value
+        when (state) {
+            is AppState.QuickPhrases -> handleQuickPhrasesSelection(quadrant, state)
+            is AppState.Spelling     -> handleSpellingSelection(quadrant, state)
+            is AppState.WordSelection -> handleWordSelection(quadrant, state)
+            else -> Unit
+        }
+
+        viewModelScope.launch {
+            delay(COOLDOWN_MS)
+            inCooldown = false
+        }
+    }
+
+    private fun handleQuickPhrasesSelection(quadrant: Int, state: AppState.QuickPhrases) {
+        when (quadrant) {
+            1, 2, 3 -> {
+                val phrase = quickPhrases.getOrNull(quadrant - 1) ?: return
+                Log.i(TAG, "Quick phrase: $phrase")
+                ttsManager.speak(phrase)
+                val newSentence = if (state.sentence.isEmpty()) phrase else "${state.sentence}. $phrase"
+                _appState.value = state.copy(
+                    activeQuadrant = quadrant, dwellProgress = 1f,
+                    sentence = newSentence
+                )
+            }
+            4 -> {
+                Log.i(TAG, "Entering Spell Mode")
+                ttsManager.speakFeedback("Spell mode")
+                _appState.value = AppState.Spelling(sentence = state.sentence)
+            }
+        }
+    }
+
+    private fun handleSpellingSelection(quadrant: Int, state: AppState.Spelling) {
+        val newSequence = state.gestureSequence + quadrant
+        val groupLabel = groupLabel(quadrant)
+        ttsManager.speakFeedback(groupLabel)
+        Log.i(TAG, "Gesture: quadrant $quadrant, sequence=$newSequence")
+
+        val candidates = wordPredictor.predict(newSequence)
+        Log.i(TAG, "Candidates: $candidates")
+
+        when {
+            candidates.size == 1 -> {
+                // Auto-select single candidate
+                val word = candidates[0]
+                confirmWord(word, state.sentence)
+            }
+            candidates.size in 2..3 -> {
+                _appState.value = AppState.WordSelection(
+                    candidates = candidates,
+                    gestureSequence = newSequence,
+                    sentence = state.sentence
+                )
+                ttsManager.speakFeedback(candidates.joinToString(", "))
+            }
+            candidates.isEmpty() -> {
+                // No matches — backspace last gesture
+                ttsManager.speakFeedback("No match, try again")
+                _appState.value = state.copy(gestureSequence = state.gestureSequence)
+            }
+            else -> {
+                _appState.value = state.copy(
+                    gestureSequence = newSequence,
+                    activeQuadrant = null,
+                    dwellProgress = 0f
+                )
+            }
+        }
+    }
+
+    private fun handleWordSelection(quadrant: Int, state: AppState.WordSelection) {
+        when {
+            quadrant == 4 -> {
+                // Back to spelling
+                Log.i(TAG, "Back to spelling from word selection")
+                ttsManager.speakFeedback("Back")
+                _appState.value = AppState.Spelling(
+                    gestureSequence = state.gestureSequence,
+                    sentence = state.sentence
+                )
+            }
+            quadrant - 1 < state.candidates.size -> {
+                val word = state.candidates[quadrant - 1]
+                confirmWord(word, state.sentence)
+            }
+        }
+    }
+
+    private fun confirmWord(word: String, currentSentence: String) {
+        Log.i(TAG, "Word confirmed: $word")
+        ttsManager.speak(word)
+        val newSentence = if (currentSentence.isEmpty()) word else "$currentSentence $word"
+        _appState.value = AppState.Spelling(sentence = newSentence)
+    }
+
+    private fun groupLabel(quadrant: Int) = when (quadrant) {
+        1 -> "A through G"
+        2 -> "H through M"
+        3 -> "N through S"
+        4 -> "T through Z"
+        else -> ""
+    }
+
+    fun setPreviewSurface(provider: Preview.SurfaceProvider) {
+        pendingSurfaceProvider = provider
+        if (::cameraManager.isInitialized) cameraManager.preview.setSurfaceProvider(provider)
+    }
+
+    fun startRecalibration() {
+        calibrationEngine.reset()
+        _appState.value = AppState.Calibrating()
+        ttsManager.speak("Recalibrating. Look at the top-left corner.")
+    }
+
+    fun speakSentence() {
+        val sentence = when (val s = _appState.value) {
+            is AppState.QuickPhrases  -> s.sentence
+            is AppState.Spelling      -> s.sentence
+            is AppState.WordSelection -> s.sentence
+            else -> ""
+        }
+        if (sentence.isNotBlank()) ttsManager.speak(sentence)
+    }
+
+    fun clearSentence() {
+        _appState.update { state ->
+            when (state) {
+                is AppState.QuickPhrases  -> state.copy(sentence = "")
+                is AppState.Spelling      -> state.copy(sentence = "")
+                is AppState.WordSelection -> state.copy(sentence = "")
+                else -> state
+            }
+        }
+    }
+
+    override fun onCleared() {
+        if (::cameraManager.isInitialized) cameraManager.stop()
+        if (::eyeGazeModel.isInitialized) eyeGazeModel.close()
+        if (::gazeEstimator.isInitialized) gazeEstimator.close()
+        super.onCleared()
     }
 }

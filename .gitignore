@@ -1,8 +1,10 @@
 .venv*/
 *.venv/
 app/.gradle/
+.gradle/
 build/
 app/build/
+**/build/
 *.iml
 .idea/
 local.properties

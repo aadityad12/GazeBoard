@@ -15,3 +15,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "GazeBoard"
 include(":app")
+include(":litert_npu_runtime_libraries:runtime_strings")
+include(":litert_npu_runtime_libraries:qualcomm_runtime_v79")

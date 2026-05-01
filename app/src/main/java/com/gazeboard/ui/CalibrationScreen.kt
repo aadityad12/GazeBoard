@@ -3,122 +3,132 @@ package com.gazeboard.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.gazeboard.state.GazeBoardViewModel
-import com.gazeboard.ui.components.CameraPreviewPip
+import com.gazeboard.state.AppState
 
+private val ScreenBg = Color(0xFF060E1A)
+private val TargetColor = Color(0xFF00BFFF)
+private val RingColor = Color(0xFF00BFFF)
+
+/**
+ * Four-corner calibration screen.
+ *
+ * Shows a dot at the current corner target with a circular dwell progress arc.
+ * User looks at the dot for 1.5 seconds to commit each corner.
+ * Order: Top-Left → Top-Right → Bottom-Left → Bottom-Right.
+ */
 @Composable
-fun CalibrationScreen(viewModel: GazeBoardViewModel) {
-    val dwellProgress    by viewModel.dwellProgress.collectAsState()
-    val calibTargetIndex by viewModel.calibTargetIndex.collectAsState()   // reactive — fixes Bug 2
-    val faceDetected     by viewModel.faceDetected.collectAsState()
-    val eyeCenterNorm    by viewModel.eyeCenterNorm.collectAsState()
-
-    val cornerLabels = listOf("Top Left", "Top Right", "Bottom Left", "Bottom Right")
+fun CalibrationScreen(
+    state: AppState.Calibrating,
+    faceDetected: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val cornerNames = listOf("Top-Left", "Top-Right", "Bottom-Left", "Bottom-Right")
+    val currentCorner = cornerNames.getOrElse(state.step) { "Done" }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(ScreenBg)
+            .systemBarsPadding()
     ) {
-        // Instructions — top center
-        Column(
+        // Instructions
+        Text(
+            text = "Calibration ${state.step + 1} / 4\nLook at the $currentCorner target",
+            color = Color(0xFFB0C8E0),
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Normal,
+            textAlign = TextAlign.Center,
+            lineHeight = 32.sp,
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 52.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = "Eye Calibration",
-                color = Color.White,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = "Look at the dot and hold your gaze",
-                color = Color(0xFFAAAAAA),
-                fontSize = 15.sp
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = "Target ${calibTargetIndex + 1} of 4  ·  ${cornerLabels.getOrElse(calibTargetIndex) { "" }}",
-                color = Color(0xFF10B981),
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = if (faceDetected) "● Face detected" else "◌  No face — center your face in view",
-                color = if (faceDetected) Color(0xFF10B981) else Color(0xFFEF4444),
-                fontSize = 12.sp
-            )
-        }
+                .align(Alignment.Center)
+                .padding(32.dp)
+        )
 
-        // Calibration target dot with progress arc
-        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val target = viewModel.calibEngine.getTarget(calibTargetIndex)
-            if (target != null) {
-                val density = LocalDensity.current
-                val dotSize = 52.dp
-                val x = with(density) { target.screenX.toDp() }
-                val y = with(density) { target.screenY.toDp() }
+        // Corner targets drawn on canvas
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val dotRadius = 20f
+            val ringRadius = 48f
+            val margin = 80f
 
-                Box(
-                    modifier = Modifier
-                        .offset(x = x - dotSize / 2, y = y - dotSize / 2)
-                        .size(dotSize)
-                ) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        // Dark background ring
-                        drawCircle(
-                            color = Color(0xFF2A2A2A),
-                            radius = size.minDimension / 2f
-                        )
-                        // Green progress fill
-                        drawArc(
-                            color = Color(0xFF10B981),
-                            startAngle = -90f,
-                            sweepAngle = 360f * dwellProgress,
-                            useCenter = true,
-                            size = size
-                        )
-                        // White center dot — always visible so user knows where to look
-                        drawCircle(
-                            color = Color.White,
-                            radius = size.minDimension / 4f
-                        )
-                    }
+            // Corner positions: TL, TR, BL, BR
+            val corners = listOf(
+                Offset(margin, margin),
+                Offset(size.width - margin, margin),
+                Offset(margin, size.height - margin),
+                Offset(size.width - margin, size.height - margin)
+            )
+
+            corners.forEachIndexed { index, pos ->
+                val isActive = index == state.step
+                val alpha = if (isActive) 1f else 0.25f
+
+                // Ring outline
+                drawCircle(
+                    color = TargetColor.copy(alpha = alpha * 0.4f),
+                    radius = ringRadius,
+                    center = pos,
+                    style = Stroke(width = 2f)
+                )
+
+                // Dwell progress arc (active corner only)
+                if (isActive && state.dwellProgress > 0f) {
+                    drawArc(
+                        color = RingColor,
+                        startAngle = -90f,
+                        sweepAngle = 360f * state.dwellProgress,
+                        useCenter = false,
+                        style = Stroke(width = 6f, cap = StrokeCap.Round),
+                        topLeft = Offset(pos.x - ringRadius, pos.y - ringRadius),
+                        size = Size(ringRadius * 2, ringRadius * 2)
+                    )
                 }
+
+                // Center dot
+                drawCircle(
+                    color = TargetColor.copy(alpha = alpha),
+                    radius = dotRadius,
+                    center = pos
+                )
+                drawCircle(
+                    color = Color.White.copy(alpha = alpha),
+                    radius = dotRadius * 0.4f,
+                    center = pos
+                )
             }
         }
 
-        // Camera PiP — bottom right, so user can verify face is in frame
-        CameraPreviewPip(
-            preview      = viewModel.cameraPreview,
-            eyeCenterNorm = eyeCenterNorm,
-            faceDetected  = faceDetected,
+        // Face indicator
+        FaceIndicator(
+            faceDetected = faceDetected,
             modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(16.dp)
+                .align(Alignment.TopEnd)
+                .padding(12.dp)
+        )
+
+        // Step progress dots at bottom
+        Text(
+            text = (0..3).joinToString("  ") { if (it < state.step) "●" else if (it == state.step) "◉" else "○" },
+            color = Color(0xFF00BFFF),
+            fontSize = 20.sp,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 32.dp)
         )
     }
 }

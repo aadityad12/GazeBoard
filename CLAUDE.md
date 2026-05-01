@@ -2,7 +2,7 @@
 
 ## Project Summary
 
-GazeBoard is a real-time, fully on-device eye-gaze-controlled AAC (Augmentative and Alternative Communication) board for people with ALS, locked-in syndrome, or severe motor disabilities. The user looks at one of 6 large phrase cells for ~1.5 seconds; the app detects gaze via a two-stage pipeline — Android FaceDetector crops the eye region, then the **EyeGaze model** (`qualcomm/EyeGaze`) estimates pitch and yaw angles on the Hexagon NPU via LiteRT's CompiledModel API. The resulting gaze angle is mapped to the 6-cell grid and the phrase is spoken via Android TTS. No internet. No cloud. Built for the **Qualcomm × LiteRT Developer Hackathon, April 30–May 1, 2026**.
+GazeBoard is a real-time, fully on-device eye-gaze AAC (Augmentative and Alternative Communication) board for people with ALS, locked-in syndrome, or severe motor disabilities. The user communicates by looking at one of 4 large screen quadrants. The app detects gaze direction via a two-stage pipeline — ML Kit face detection crops the eye region, then the **EyeGaze model** (`qualcomm/EyeGaze`) estimates pitch and yaw angles on the NPU via LiteRT's CompiledModel API. Gaze angles are mapped to quadrants after 4-corner calibration. Two screens: Quick Phrases (Yes/No/Help/More) and Spell Mode (letter groups + T9-style word prediction). Built for the **Qualcomm × LiteRT Developer Hackathon, April 30–May 1, 2026**.
 
 ---
 
@@ -19,10 +19,10 @@ GazeBoard is a real-time, fully on-device eye-gaze-controlled AAC (Augmentative 
 ### Stage Two — Scored (100 points total)
 | Category | Points | What matters |
 |----------|--------|--------------|
-| Technological Implementation | **40** | Performance (low latency), Efficiency (energy/resource use), Optimization (evidence of model/code optimization for SM8750) |
-| Application Use-Case & Innovation | **25** | Problem Solving, Creativity/Uniqueness, User Experience |
-| Deployment & Accessibility | **20** | Ease of Install, Usability/Stability during demo |
-| Presentation & Documentation | **15** | Clarity of explanation, Code Quality, README/docs |
+| Technological Implementation | **40** | Low latency, energy efficiency, optimization for SM8750, NPU utilization |
+| Application Use-Case & Innovation | **25** | Problem solving, creativity, UX quality |
+| Deployment & Accessibility | **20** | Ease of install, stability during demo |
+| Presentation & Documentation | **15** | Code quality, README, verbal clarity |
 
 ### Tiebreaker Priority (in order)
 1. LiteRT Usage
@@ -35,12 +35,14 @@ GazeBoard is a real-time, fully on-device eye-gaze-controlled AAC (Augmentative 
 
 ## Key Constraints (DO NOT VIOLATE)
 
-- **CompiledModel API only** — use `CompiledModel.create(context.assets, modelPath, CompiledModel.Options.Builder().setAccelerator(Accelerator.NPU, Accelerator.GPU).build())`. Never use `Interpreter`.
-- **NPU accelerator required** — must verify at runtime that execution is on NPU, not CPU fallback. Display accelerator badge in UI.
+- **CompiledModel API only** — `CompiledModel.create(context.assets, modelPath, CompiledModel.Options(Accelerator.NPU, Accelerator.GPU))`. Never use `Interpreter`.
+- **Show the accelerator badge** — display "LiteRT: NPU · Xms" or "LiteRT: CPU · Xms" in the UI. Judges WILL look for this.
 - **Offline only** — no network calls, no Firebase, no cloud APIs, no analytics.
-- **6 cells max** — NOT a keyboard, NOT a sentence builder, NOT a word predictor. Six large phrase cells.
-- **No stretch feature creep** — iris_landmark model is stretch goal only; implement only if core works by Hour 8.
-- **No MediaPipe framework dependency** — use raw .tflite models only. We do NOT depend on Qualcomm AI Hub accounts or AOT compilation. LiteRT JIT-compiles any .tflite for the Hexagon NPU on first launch and caches the result. Launch the app once before the demo to warm the cache.
+- **4 quadrants max** — Quick Phrases screen (Yes/No/Help/More) + Spell Mode (letter groups or word candidates). Nothing else.
+- **Word predictor is behind `WordPredictor` interface** — `TriePredictor` is the implementation.
+- **EyeGaze model is in `app/src/main/assets/eyegaze.tflite`** — do not re-download.
+- **ML Kit face detection** — `android.media.FaceDetector` is proven unreliable on S25 Ultra (0% detection rate on rotated sensor frames). ML Kit is the correct choice here.
+- **NPU fallback**: NPU and GPU both fail at runtime on this device (`Failed to compile model`). CPU via CompiledModel API still satisfies the eligibility gate. The badge shows the active accelerator clearly.
 
 ---
 
@@ -48,12 +50,12 @@ GazeBoard is a real-time, fully on-device eye-gaze-controlled AAC (Augmentative 
 
 | Component | Library | Version |
 |-----------|---------|---------|
-| Language | Kotlin | 1.9+ |
-| UI | Jetpack Compose | BOM 2024.x |
-| LiteRT Core | `com.google.ai.edge.litert:litert` | 2.1.0 |
-| LiteRT Qualcomm NPU | `com.google.ai.edge.litert:litert-qualcomm` | 2.1.0 |
-| Camera | CameraX | 1.3.x |
-| Face detection | `android.media.FaceDetector` | framework (CPU) |
+| Language | Kotlin | 2.0.21 + `-Xskip-metadata-version-check` |
+| UI | Jetpack Compose | BOM 2024.06.00 |
+| LiteRT Core | `com.google.ai.edge.litert:litert` | 2.1.4 |
+| LiteRT Qualcomm NPU | `com.qualcomm.qti:qnn-litert-delegate` | 2.34.0 |
+| Camera | CameraX | 1.3.4 |
+| Face detection | `com.google.mlkit:face-detection` | 16.1.7 |
 | TTS | Android TextToSpeech | framework |
 | State | ViewModel + StateFlow | Jetpack lifecycle |
 | minSdk | 26 | Android 8.0 |
@@ -62,58 +64,43 @@ GazeBoard is a real-time, fully on-device eye-gaze-controlled AAC (Augmentative 
 
 ---
 
-## EyeGaze Model (qualcomm/EyeGaze)
+## EyeGaze Model
 
 **File:** `app/src/main/assets/eyegaze.tflite`
-**Source:** `models/mediapipe_face-tflite-float/eyegaze.tflite`
+**Source:** `qualcomm/EyeGaze` on HuggingFace
 
-| Tensor | Name | Shape | Type | Notes |
-|--------|------|-------|------|-------|
-| Input | image | `[1, 96, 160]` | float32 | Grayscale [0,1], no channel dim |
-| Output 0 | heatmaps | `[1, 3, 34, 48, 80]` | float32 | Eye landmark heatmaps (unused) |
-| Output 1 | landmarks | `[1, 34, 2]` | float32 | 34 eye landmark XY positions |
-| Output 2 | gaze_pitchyaw | `[1, 2]` | float32 | **[pitch, yaw] in radians** |
+| Tensor | Shape | Notes |
+|--------|-------|-------|
+| Input | `[1, 96, 160]` | Grayscale [0,1], no channel dim |
+| Output 0 | `[1, 3, 34, 48, 80]` | Heatmaps (unused) |
+| Output 1 | `[1, 34, 2]` | Landmarks (unused) |
+| Output 2 | `[1, 2]` | **[pitch, yaw] in radians** |
 
-### Gaze Angles
 ```
-pitch > 0 = looking down,  pitch < 0 = looking up     range: [-0.5, 0.5] rad
-yaw   > 0 = looking right, yaw   < 0 = looking left   range: [-0.8, 0.8] rad
+pitch > 0 = looking down,  pitch < 0 = looking up
+yaw   > 0 = looking right, yaw   < 0 = looking left
 ```
-
-### EMA Smoothing
-```kotlin
-smoothedPitch = alpha * rawPitch + (1 - alpha) * smoothedPitch  // alpha = 0.3
-smoothedYaw   = alpha * rawYaw   + (1 - alpha) * smoothedYaw
-```
-
-### Calibration (pitch/yaw → screen pixels)
-```
-calibrated = affineMatrix(2×3) * [pitch, yaw, 1]^T
-```
-4-point corner calibration computes the affine matrix from recorded (pitch,yaw) at each corner.
 
 ---
 
-## Fallback Plan (if EyeDetector fails at Hour 8)
-
-If `android.media.FaceDetector` is too unreliable, replace `EyeDetector.kt` with ML Kit face detection (Option B). Same pipeline contract — only `EyeDetector.detectAndCrop()` changes. The EyeGaze NPU inference, CalibrationEngine, and UI are unaffected.
-
----
-
-## Data Flow Pipeline
+## Architecture
 
 ```
-Front Camera (640×480 @ 15 fps)
-  → CameraX ImageAnalysis (ARGB_8888, KEEP_ONLY_LATEST)
-  → android.media.FaceDetector → eye midpoint + eye distance   [CPU, ~30ms]
-  → Crop eye region → resize 160×96 → grayscale normalize
-  → eyegaze.tflite on NPU (CompiledModel)                      [NPU, ~8ms]
-  → gaze_pitchyaw [1, 2] → pitch, yaw in radians
-  → EMA smoothing (α = 0.3)
-  → Calibration affine transform: (pitch, yaw) → screen (x, y)
-  → Map to 2×3 grid cell index
-  → Dwell timer (1.5s threshold)
-  → TTS output (QUEUE_FLUSH)
+AppState: Calibrating(step:Int) | QuickPhrases | Spelling | WordSelection
+
+Front Camera (640×480 @ 15fps)
+  → CameraX ImageAnalysis (RGBA_8888, KEEP_ONLY_LATEST)
+  → Rotate frame (imageProxy.imageInfo.rotationDegrees)
+  → ML Kit FaceDetector → eye crop FloatBuffer [CPU, ~30ms]
+  → eyegaze.tflite via CompiledModel API [NPU→CPU, ~40ms]
+  → pitch, yaw in radians
+  → EMA smoothing (α=0.7)
+  → CalibrationEngine.mapToQuadrant(pitch, yaw) → 1..4
+  → GazeResult(quadrant, inferenceMs, accelerator)
+  → GazeBoardViewModel dwell timer (1.0s threshold, 0.5s cooldown)
+  → State machine transition
+  → TriePredictor.predict(gestureSequence) → word candidates
+  → TTS output
 ```
 
 ---
@@ -122,48 +109,52 @@ Front Camera (640×480 @ 15 fps)
 
 ```
 GazeBoard/
-├── CLAUDE.md                          ← You are here
-├── AGENTS.md                          ← Agentic workflow definitions
-├── README.md                          ← Public-facing repo README
+├── CLAUDE.md
+├── AGENTS.md
+├── README.md
+├── LICENSE
 ├── docs/
-│   ├── PRD.md                         ← Product Requirements Document
-│   ├── ARCHITECTURE.md                ← Full technical architecture
-│   ├── TIMELINE.md                    ← Hour-by-hour execution plan
-│   ├── DEMO-SCRIPT.md                 ← 3-minute demo script
-│   └── JUDGING-STRATEGY.md            ← Point-by-point scoring strategy
+│   ├── PRD.md
+│   ├── ARCHITECTURE.md
+│   ├── TIMELINE.md
+│   ├── DEMO-SCRIPT.md
+│   └── JUDGING-STRATEGY.md
 ├── models/
-│   └── README.md                      ← Model acquisition instructions
+│   └── README.md
 ├── scripts/
-│   ├── download_models.sh             ← Download face landmark .tflite
-│   └── install_and_run.sh             ← Build, install, launch (warms JIT cache)
+│   └── install_and_run.sh
 └── app/
-    ├── build.gradle.kts
     └── src/main/
-        ├── AndroidManifest.xml
-        ├── java/com/gazeboard/
-        │   ├── MainActivity.kt
-        │   ├── GazeBoardApplication.kt
-        │   ├── ml/
-        │   │   ├── EyeGazeModel.kt
-        │   │   ├── EyeDetector.kt
-        │   │   └── GazeEstimator.kt
-        │   ├── camera/
-        │   │   └── CameraManager.kt
-        │   ├── ui/
-        │   │   ├── CalibrationScreen.kt
-        │   │   ├── BoardScreen.kt
-        │   │   └── components/
-        │   │       ├── PhraseCell.kt
-        │   │       ├── GazeCursor.kt
-        │   │       └── NpuBadge.kt
-        │   ├── audio/
-        │   │   └── TtsManager.kt
-        │   ├── calibration/
-        │   │   └── CalibrationEngine.kt
-        │   └── state/
-        │       ├── GazeBoardViewModel.kt
-        │       └── AppState.kt
-        └── res/values/strings.xml
+        ├── assets/
+        │   ├── eyegaze.tflite
+        │   └── words.txt
+        └── java/com/gazeboard/
+            ├── MainActivity.kt
+            ├── GazeBoardApplication.kt
+            ├── ml/
+            │   ├── EyeGazeModel.kt     — CompiledModel wrapper
+            │   ├── EyeDetector.kt      — ML Kit face detection + eye crop
+            │   └── GazeEstimator.kt    — Pipeline orchestrator → GazeResult
+            ├── prediction/
+            │   ├── WordPredictor.kt    — Interface
+            │   └── TriePredictor.kt    — Dictionary-based implementation
+            ├── calibration/
+            │   └── CalibrationEngine.kt — 4-corner → mapToQuadrant()
+            ├── camera/
+            │   └── CameraManager.kt   — CameraX ImageAnalysis pipeline
+            ├── state/
+            │   ├── AppState.kt        — Sealed class state machine
+            │   └── GazeBoardViewModel.kt
+            ├── audio/
+            │   └── TtsManager.kt
+            └── ui/
+                ├── QuickPhrasesScreen.kt
+                ├── SpellScreen.kt
+                ├── CalibrationScreen.kt
+                └── components/
+                    ├── QuadrantCell.kt
+                    ├── GazeCursor.kt
+                    └── NpuBadge.kt
 ```
 
 ---
@@ -171,27 +162,21 @@ GazeBoard/
 ## Build & Run
 
 ```bash
-# 1. Acquire model (see models/README.md for all options)
-bash scripts/download_models.sh
-
-# 2. Build, install, and launch (first launch warms LiteRT JIT cache)
-bash scripts/install_and_run.sh
-
-# OR manually:
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ./gradlew :app:assembleDebug
-adb install app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n com.gazeboard/.MainActivity
+export ADB="$HOME/Library/Android/sdk/platform-tools/adb"
+$ADB install -r app/build/outputs/apk/debug/app-debug.apk
+$ADB shell am start -n com.gazeboard/.MainActivity
 ```
 
 ---
 
 ## Known Risks & Mitigations
 
-| Risk | Likelihood | Mitigation |
-|------|-----------|------------|
-| CompiledModel API requires AOT model specific to SM8750 | High | Use Qualcomm AI Hub export; have JIT fallback path |
-| Iris tracking jittery in low light | Medium | EMA smoothing + wider dwell threshold (2s) |
-| Face not detected if phone tilted | Medium | Show "face not detected" overlay, prompt user to center |
-| TTS latency causes lag feeling | Low | Pre-warm on launch, QUEUE_FLUSH mode |
-| Hour 8 go/no-go: iris unreliable | Medium | Head pose pivot is ready (2-hour implementation) |
-| Live demo device crash | Low | Pre-record backup video before demo |
+| Risk | Mitigation |
+|------|-----------|
+| NPU/GPU fail at runtime (`Failed to compile model`) | CPU fallback via CompiledModel API — still satisfies eligibility gate; badge shows clearly |
+| Face not detected if phone tilted | ML Kit handles rotation; frame is rotated upright before inference |
+| Gaze jitter | EMA smoothing α=0.7; 1s dwell threshold prevents accidental selection |
+| Calibration skipped in demo | CalibrationEngine persists pitchMid/yawMid in SharedPreferences; calibrate once before demo |
+| Demo device crash | Pre-record backup video before demo |

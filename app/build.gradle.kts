@@ -10,10 +10,22 @@ android {
 
     defaultConfig {
         applicationId = "com.gazeboard"
-        minSdk = 26
+        minSdk = 31
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+
+        // LiteRT NPU JIT runtimes are arm64-only on Snapdragon devices.
+        ndk {
+            abiFilters.add("arm64-v8a")
+        }
+
+        // Required for Qualcomm NPU runtime libraries shipped as dynamic features.
+        packaging {
+            jniLibs {
+                useLegacyPackaging = true
+            }
+        }
     }
 
     buildTypes {
@@ -40,13 +52,34 @@ android {
         compose = true
     }
 
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+
     // Include .tflite files in assets without compression (required for mmap)
     androidResources {
         noCompress += "tflite"
     }
+
+    // LiteRT NPU runtime for the Galaxy S25 Ultra Snapdragon 8 Elite
+    // target (Qualcomm_SM8750), which maps to runtime v79.
+    dynamicFeatures.add(":litert_npu_runtime_libraries:qualcomm_runtime_v79")
+
+    bundle {
+        deviceTargetingConfig = file("device_targeting_configuration.xml")
+        deviceGroup {
+            enableSplit = true
+            defaultGroup = "other"
+        }
+    }
 }
 
 dependencies {
+    // Strings referenced by the LiteRT NPU runtime dynamic feature manifests.
+    implementation(project(":litert_npu_runtime_libraries:runtime_strings"))
+
     // Jetpack Compose BOM
     val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
     implementation(composeBom)
@@ -69,10 +102,7 @@ dependencies {
 
     // LiteRT — CompiledModel API (NOT the old Interpreter)
     // This is the pass/fail gate for the hackathon — do not change to tflite-task-vision
-    implementation("com.google.ai.edge.litert:litert:2.1.4")
-
-    // LiteRT Qualcomm QNN backend — enables Accelerator.NPU via CompiledModel API on SM8750 (Hexagon)
-    implementation("com.qualcomm.qti:qnn-litert-delegate:2.34.0")
+    implementation("com.google.ai.edge.litert:litert:2.1.1")
 
     // CameraX
     val cameraxVersion = "1.3.4"

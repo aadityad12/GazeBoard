@@ -25,6 +25,10 @@ class EyeDetector {
         val buffer: FloatBuffer,
         val eyeCenterNormX: Float,   // eye center X normalized to [0,1] in the rotated frame
         val eyeCenterNormY: Float,   // eye center Y normalized to [0,1] in the rotated frame
+        val faceCenterNormX: Float,  // face box center X normalized to [0,1]
+        val faceCenterNormY: Float,  // face box center Y normalized to [0,1]
+        val headYaw: Float,          // ML Kit head yaw in degrees, positive turns right
+        val headPitch: Float,        // ML Kit head pitch in degrees, positive turns up/down by ML Kit convention
         val detectMs: Long
     )
 
@@ -54,6 +58,7 @@ class EyeDetector {
         }
 
         val detectMs = SystemClock.elapsedRealtime() - startMs
+        Log.d(TAG, "Face detect CPU ${detectMs}ms")
 
         if (faces.isEmpty()) return null
         val face = faces[0]
@@ -103,6 +108,10 @@ class EyeDetector {
             buffer = buffer,
             eyeCenterNormX = leftEyePos.x / bitmap.width,
             eyeCenterNormY = leftEyePos.y / bitmap.height,
+            faceCenterNormX = face.boundingBox.exactCenterX() / bitmap.width,
+            faceCenterNormY = face.boundingBox.exactCenterY() / bitmap.height,
+            headYaw = face.headEulerAngleY,
+            headPitch = face.headEulerAngleX,
             detectMs = detectMs
         )
     }

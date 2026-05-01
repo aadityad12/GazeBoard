@@ -20,8 +20,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.GazeBoard"
-        android:hardwareAccelerated="true"
-        android:extractNativeLibs="false">
+        android:hardwareAccelerated="true">
 
         <activity
             android:name=".MainActivity"

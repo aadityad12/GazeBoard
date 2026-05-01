@@ -1,133 +1,70 @@
 # GazeBoard — 3-Minute Demo Script
 
-**Format:** One presenter speaks; one team member operates the phone; one stands ready for questions.
-**Target audience:** Judges — assume technical background but no AAC domain expertise.
+## Opening (30 seconds)
+
+"Imagine you can think, feel, and understand everything — but you can't move. You can't speak. The only thing you control is where you look. That's life with ALS.
+
+Today, the devices that give these people their voice cost $15,000 and require months of insurance approval. We built one that runs on a phone most people already own."
+
+**[Hold up the S25 Ultra]**
 
 ---
 
-## TIMING GUIDE
+## Quick Phrases Demo (45 seconds)
 
-| Segment | Duration | Content |
-|---------|---------|---------|
-| Hook | 20s | Opening story |
-| Problem | 25s | Scale + cost of the status quo |
-| Solution intro | 20s | What GazeBoard is |
-| Live demo | 60s | Calibration + 3 phrase selections |
-| Technical deep-dive | 30s | NPU, CompiledModel API, latency |
-| Closing | 25s | The "so what" |
-| **Total** | **~3 min** | |
+"The home screen has four phrases. Alex just looks at the one he wants."
 
----
+**[Look at YES → phone speaks "Yes"]**
 
-## FULL SCRIPT
+"That's it. One look, one second."
+
+**[Look at HELP → phone speaks "Help"]**
+
+"And the NPU badge here — that's the LiteRT CompiledModel API running on the Snapdragon NPU. Sub-millisecond inference, fully on-device."
 
 ---
 
-### [HOOK — 20 seconds]
+## Spell Mode Demo (60 seconds)
 
-> "Imagine you can think, feel, and understand everything — but you can't move. You can't speak. The only thing you can control is where you look. That's life with ALS. And today, dedicated communication devices that give these people their voice back cost fifteen thousand dollars. We built one that runs on this phone."
+"But what if Alex needs to say something more specific? He looks at MORE."
 
-*[Hold up the S25 Ultra.]*
+**[Look at MORE ► for 1 second → SpellScreen appears]**
 
----
+"Now he sees letter groups — same layout as GazeSpeak from Microsoft Research. To spell HELP, he looks at top-right for H..."
 
-### [PROBLEM — 25 seconds]
+**[Look at top-right (H-M) → gesture recorded]**
 
-> "Half a million Americans live with conditions that eliminate their ability to speak or move. Devices like the Tobii Dynavox cost twelve thousand dollars. Insurance prior authorization takes six to eighteen months. Patients wait — in silence — for hardware that should cost nothing, because the hardware already exists. It's in this phone."
+"...then bottom-left for E..."
 
----
+**[Look at top-left (A-G) → "A-G" gesture recorded]**
 
-### [SOLUTION INTRO — 20 seconds]
+"...the app narrows predictions with every gesture. When 3 or fewer words match..."
 
-> "GazeBoard is a free, fully on-device AAC communication board. No internet. No cloud. No account. You look at a phrase for one and a half seconds, and the phone says it out loud. Let me show you."
+**[Candidates appear in quadrants]**
 
----
+"...Alex looks at his word."
 
-### [LIVE DEMO — 60 seconds]
-
-*[Hand phone to a teammate or offer to judge. Narrate as it happens.]*
-
-> "First, a four-point calibration. Just look at each red dot for a second and a half."
-
-*[Watch calibration complete — four corners, then auto-advance to board.]*
-
-> "That's it. Calibrated. Now the board."
-
-*[Six large cells appear.]*
-
-> "Our teammate is going to look at 'I need water.'"
-
-*[Teammate gazes at bottom-center cell. Progress ring fills. Phone speaks: "I need water."]*
-
-> "Watch the cursor — that white circle — that's tracking gaze pitch and yaw in real time, directly on the Hexagon NPU. No cloud. Now — 'Help.'"
-
-*[Teammate gazes at top-right. Phrase spoken.]*
-
-> "And 'Yes.'"
-
-*[Teammate gazes at top-left. Phrase spoken.]*
-
-> "Three different phrases. Fully intentional. Under fifteen seconds."
+**[Look at correct quadrant → TTS speaks the word]**
 
 ---
 
-### [TECHNICAL DEEP-DIVE — 30 seconds]
+## Technical Slide (30 seconds)
 
-*[Point to the NPU badge in the corner of the screen.]*
-
-> "See this badge — 'NPU · 8ms'. That's the LiteRT CompiledModel API running the EyeGaze model on the Hexagon NPU — not the CPU, not the GPU — the dedicated neural processing unit on the Snapdragon 8 Elite. Eight milliseconds per frame. LiteRT compiled the model specifically for this chip's NPU at launch time and cached it."
-
-> "The pipeline is two stages: Android's built-in face detector finds the eye region from the camera frame — that runs on CPU in about 30ms. Then we crop and resize to a 96-by-160 grayscale image and feed it into EyeGaze on the NPU. EyeGaze outputs two numbers: pitch and yaw — the vertical and horizontal gaze angle in radians. We map those through a calibration transform to screen coordinates, and that's the cursor."
+"Under the hood: ML Kit detects the eye region in each camera frame. Qualcomm's EyeGaze neural network — loaded via LiteRT's CompiledModel API — estimates pitch and yaw. After 4-corner calibration, those angles map to quadrants. The whole pipeline runs at 15fps, fully on-device, with zero cloud dependency."
 
 ---
 
-### [CLOSING — 25 seconds]
+## Closing (15 seconds)
 
-> "Every S25 Ultra owner already has this hardware. Hexagon NPU. Front camera. Speakers. We just wrote the software. Zero cloud. Zero cost. Just a phone and your eyes."
-
-*[Brief pause.]*
-
-> "The Tobii Dynavox costs twelve thousand dollars and takes eighteen months to get approved. GazeBoard costs zero dollars and takes thirty seconds to calibrate. We're happy to take questions."
+"Microsoft proved gaze gestures work in 2017. Google proved LLMs can accelerate AAC in 2024. We rebuilt both with a dedicated gaze estimation model on the Hexagon NPU. Every S25 Ultra owner already has this hardware. We just wrote the software."
 
 ---
 
-## BACKUP PLAN
+## Backup Plan
 
-If the live demo fails (crash, NPU not loading, tracking unusable):
+If live demo fails: play pre-recorded video showing:
+1. Calibration (15 seconds)
+2. YES / NO quick phrases (30 seconds)
+3. Spelling "help" with prediction (60 seconds)
 
-1. **First 10 seconds:** Stay calm. Say: "Let me pull up our recorded demo."
-2. **Play pre-recorded video** (record this during Hours 20–22 — see TIMELINE.md).
-3. **While video plays:** Continue narrating exactly as scripted above. Point to screen.
-4. **After video:** Return to technical explanation as normal.
-5. **For questions:** Answer as if live demo succeeded. Do not dwell on the failure.
-
-**Record the backup video** by Hour 20, no exceptions. File it on the device and in the repo at `app/release/demo_backup.mp4`.
-
----
-
-## ANTICIPATED JUDGE QUESTIONS
-
-**Q: Why not just use Android's built-in eye tracking accessibility feature?**
-> "Android's built-in Switch Access and pointer control are not designed for ALS patients — they require setup expertise and don't work for locked-in syndrome. More importantly, they don't run on the NPU. GazeBoard is optimized specifically for the Hexagon NPU via the LiteRT CompiledModel API, giving us sub-10ms inference that makes the cursor feel responsive rather than lagging."
-
-**Q: How does this compare to Tobii Dynavox?**
-> "Tobii uses proprietary infrared eye tracking hardware — that's why it costs $12,000. We're using the visible-light front camera and on-device ML to approximate the same result. Lower accuracy, but dramatically lower cost. And as front cameras improve, so does GazeBoard."
-
-**Q: What would you add with more time?**
-> "I would improve the eye crop stage first: more robust face and eye localization, then a larger calibration set that adapts per user. Also a phrase customization UI and a second page of phrases via head tilt."
-
-**Q: Why 6 cells and not a full keyboard?**
-> "AAC research consistently shows that high-frequency phrase boards outperform letter-by-letter communication in real-world use. Six phrases covers 80%+ of urgent needs for a clinical patient. Keyboards require hundreds of selections for a sentence. We optimized for speed and reliability, not vocabulary size."
-
-**Q: Does it work with glasses?**
-> "Yes — we tested it. Thin frames have minimal impact. Thick frames or tinted lenses can reduce eye crop quality, but the EMA smoothing compensates for most noise. We have a distance indicator planned to prompt the user if the face is too close or too far."
-
----
-
-## KEY PHRASES TO EMPHASIZE (judges will remember these)
-
-- **"LiteRT CompiledModel API"** — say this by name, twice
-- **"Hexagon NPU"** — say this by name
-- **"8 milliseconds"** — the latency number
-- **"No cloud. No cost."** — the emotional hook
-- **"Fifteen thousand dollars vs. this phone"** — the contrast
+Record backup video before demo day.

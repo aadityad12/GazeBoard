@@ -2,25 +2,22 @@ package com.gazeboard.ml
 
 import android.graphics.Bitmap
 import android.util.Log
+import com.gazeboard.calibration.CalibrationEngine
 
 /**
  * Orchestrates the two-stage gaze estimation pipeline:
  *   Stage 1: EyeDetector  — finds eye region in camera frame (ML Kit, CPU)
- *   Stage 2: EyeGazeModel — estimates gaze pitch/yaw from eye crop (CompiledModel, NPU)
+ *   Stage 2: EyeGazeModel — estimates pitch/yaw from eye crop (CompiledModel, NPU/CPU)
  *
- * Output is a smoothed (pitch, yaw) pair in radians, ready for CalibrationEngine.
- * Both pitch and yaw are in the model's native coordinate system:
- *   pitch > 0 = looking down,  pitch < 0 = looking up
- *   yaw   > 0 = looking right, yaw   < 0 = looking left
- *
- * Typical ranges: pitch ∈ [-0.5, 0.5] rad, yaw ∈ [-0.8, 0.8] rad
+ * Output is a [GazeResult] containing the active quadrant (1-4) and telemetry
+ * for the NPU badge. Quadrant mapping requires a calibrated [CalibrationEngine].
  *
  * Call [estimate] from a background thread (CameraX analysis executor).
  */
 class GazeEstimator {
 
-    // EMA smoothing — α=0.3 balances responsiveness vs jitter
-    private val alpha = 0.3f
+    // EMA smoothing — α=0.7 for responsive tracking without excessive jitter
+    private val alpha = 0.7f
     private var smoothedPitch = 0f
     private var smoothedYaw   = 0f
     private var hasFirstSample = false
@@ -31,30 +28,34 @@ class GazeEstimator {
         private const val TAG = "GazeBoard"
     }
 
-    /**
-     * Run the full two-stage pipeline on one camera frame.
-     *
-     * @param bitmap       Full ARGB_8888 camera frame from CameraX (e.g. 640×480, already rotated)
-     * @param eyeGazeModel Loaded EyeGazeModel instance (must have load() called)
-     *
-     * @return [GazeResult] with smoothed pitch/yaw and eye center, or null if no face detected.
-     */
-    fun estimate(bitmap: Bitmap, eyeGazeModel: EyeGazeModel): GazeResult? {
-        val detectResult = eyeDetector.detectAndCrop(bitmap) ?: run {
-            Log.d(TAG, "GazeEstimator: no face detected in frame")
-            return null
+    fun estimate(
+        bitmap: Bitmap,
+        eyeGazeModel: EyeGazeModel,
+        calibration: CalibrationEngine
+    ): GazeResult {
+        val detectResult = eyeDetector.detectAndCrop(bitmap)
+            ?: return GazeResult(quadrant = 0, confidence = 0f,
+                inferenceMs = eyeGazeModel.lastInferenceMs, accelerator = eyeGazeModel.acceleratorName)
+
+        val angles = eyeGazeModel.runInference(detectResult.buffer)
+            ?: return GazeResult(quadrant = 0, confidence = 0f,
+                inferenceMs = eyeGazeModel.lastInferenceMs, accelerator = eyeGazeModel.acceleratorName)
+
+        val (sp, sy) = smooth(angles.pitch, angles.yaw)
+
+        val quadrant = if (calibration.isCalibrated) {
+            calibration.mapToQuadrant(sp, sy)
+        } else {
+            calibration.mapToQuadrantUncalibrated(sp, sy)
         }
 
-        val angles = eyeGazeModel.runInference(detectResult.buffer) ?: return null
-
-        val smoothed = smooth(angles.pitch, angles.yaw)
-
         return GazeResult(
-            pitch          = smoothed.first,
-            yaw            = smoothed.second,
-            eyeCenterNormX = detectResult.eyeCenterNormX,
-            eyeCenterNormY = detectResult.eyeCenterNormY,
-            faceDetectMs   = detectResult.detectMs
+            quadrant    = quadrant,
+            confidence  = 1.0f,
+            inferenceMs = eyeGazeModel.lastInferenceMs,
+            accelerator = eyeGazeModel.acceleratorName,
+            rawPitch    = angles.pitch,
+            rawYaw      = angles.yaw
         )
     }
 
@@ -77,22 +78,20 @@ class GazeEstimator {
         eyeDetector.reset()
     }
 
-    fun close() {
-        eyeDetector.close()
-    }
+    fun close() = eyeDetector.close()
 
     /**
-     * Output contract for ViewModel and CalibrationEngine.
+     * Output contract between ML pipeline and ViewModel/UI.
      *
-     * pitch/yaw are smoothed radians from the NPU model (not yet mapped to screen).
-     * eyeCenterNorm{X,Y} are normalized [0,1] coordinates for the PiP overlay.
-     * faceDetectMs is ML Kit detection latency for the pipeline stats display.
+     * quadrant: 0 = no face detected, 1..4 = active screen quadrant
+     * rawPitch/rawYaw: unsmoothed model output for calibration accumulation
      */
     data class GazeResult(
-        val pitch: Float,
-        val yaw: Float,
-        val eyeCenterNormX: Float = 0f,
-        val eyeCenterNormY: Float = 0f,
-        val faceDetectMs: Long = 0L
+        val quadrant: Int,
+        val confidence: Float,
+        val inferenceMs: Long,
+        val accelerator: String,
+        val rawPitch: Float = 0f,
+        val rawYaw: Float = 0f
     )
 }

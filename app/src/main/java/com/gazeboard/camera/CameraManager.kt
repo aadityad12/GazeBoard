@@ -13,6 +13,7 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import com.gazeboard.calibration.CalibrationEngine
 import com.gazeboard.ml.EyeGazeModel
 import com.gazeboard.ml.GazeEstimator
 import com.gazeboard.state.GazeBoardViewModel
@@ -20,27 +21,26 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 /**
- * Manages the CameraX ImageAnalysis pipeline.
+ * CameraX ImageAnalysis pipeline.
  *
  * Frame pipeline:
- *   ImageProxy (ARGB_8888) → toBitmap() → GazeEstimator.estimate()
- *     → EyeDetector [ML Kit, CPU] → eye crop FloatBuffer
- *     → EyeGazeModel [CompiledModel, NPU] → pitch, yaw
- *   → GazeBoardViewModel.onGazeUpdate()
+ *   ImageProxy (RGBA_8888) → toBitmap() → rotate to upright
+ *     → GazeEstimator.estimate() → GazeResult(quadrant)
+ *     → GazeBoardViewModel.onGazeUpdate()
  *
- * The [preview] use case is created in GazeBoardViewModel and passed in here so
- * composables can call preview.setSurfaceProvider() before the camera starts.
- * Uses STRATEGY_KEEP_ONLY_LATEST to drop stale frames and keep pipeline latency bounded.
+ * Uses STRATEGY_KEEP_ONLY_LATEST to drop stale frames and bound pipeline latency.
+ * Never blocks the main thread — all inference runs on inferenceExecutor.
  */
 class CameraManager(
     private val context: Context,
-    private val preview: Preview,
     private val eyeGazeModel: EyeGazeModel,
     private val gazeEstimator: GazeEstimator,
+    private val calibrationEngine: CalibrationEngine,
     private val viewModel: GazeBoardViewModel
 ) {
-
     private val inferenceExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+
+    val preview: Preview = Preview.Builder().build()
 
     companion object {
         private const val TAG = "GazeBoard"
@@ -48,15 +48,12 @@ class CameraManager(
 
     fun start(lifecycleOwner: LifecycleOwner) {
         val providerFuture = ProcessCameraProvider.getInstance(context)
-
         providerFuture.addListener({
             val cameraProvider = providerFuture.get()
 
             val imageAnalysis = ImageAnalysis.Builder()
                 .setTargetResolution(Size(640, 480))
                 .setTargetRotation(Surface.ROTATION_0)
-                // Discard queued frames so we always process the freshest.
-                // Prevents memory growth when inference takes longer than frame interval.
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                 .build()
@@ -73,19 +70,16 @@ class CameraManager(
                     preview,
                     imageAnalysis
                 )
-                Log.i(TAG, "CameraX bound (640×480, RGBA_8888, KEEP_ONLY_LATEST, front camera)")
+                Log.i(TAG, "CameraX bound (640×480, RGBA_8888, KEEP_ONLY_LATEST)")
             } catch (e: Exception) {
                 Log.e(TAG, "CameraX bind failed: ${e.message}", e)
             }
-
         }, ContextCompat.getMainExecutor(context))
     }
 
     private fun processFrame(imageProxy: ImageProxy) {
         try {
             val raw: Bitmap = imageProxy.toBitmap()
-
-            // Rotate to upright orientation — sensor delivers frames rotated relative to display
             val rotation = imageProxy.imageInfo.rotationDegrees
             val bitmap = if (rotation != 0) {
                 val m = Matrix().apply { postRotate(rotation.toFloat()) }
@@ -93,20 +87,13 @@ class CameraManager(
                     .also { raw.recycle() }
             } else raw
 
-            val gazeResult = gazeEstimator.estimate(bitmap, eyeGazeModel)
-
+            val result = gazeEstimator.estimate(bitmap, eyeGazeModel, calibrationEngine)
             bitmap.recycle()
-
-            viewModel.onGazeUpdate(
-                gazeResult   = gazeResult,
-                inferenceMs  = eyeGazeModel.lastInferenceMs,
-                accelerator  = eyeGazeModel.acceleratorName
-            )
-
+            viewModel.onGazeUpdate(result)
         } catch (e: Exception) {
             Log.e(TAG, "Frame processing error: ${e.message}", e)
         } finally {
-            imageProxy.close()  // always — never skip this
+            imageProxy.close()
         }
     }
 

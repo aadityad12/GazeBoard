@@ -1,7 +1,6 @@
 package com.gazeboard.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -13,50 +12,30 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/**
- * Badge showing current inference accelerator and latency.
- * Green = NPU (good), Yellow = GPU (acceptable), Red = CPU (fail state).
- *
- * This badge is visible to judges during the demo and is worth points in the
- * Technological Implementation category (40 pts). Keep it always visible.
- *
- * PERSON C OWNS THIS FILE.
- */
+/** Small overlay badge showing the active LiteRT accelerator and inference latency. */
 @Composable
-fun NpuBadge(
-    accelerator: String,
-    inferenceMs: Long,
-    modifier: Modifier = Modifier
-) {
-    val backgroundColor = when (accelerator) {
-        "NPU", "NPU+GPU" -> Color(0xFF00C853)  // green — confirmed Hexagon NPU execution
-        "GPU"            -> Color(0xFFFFD600)  // yellow — GPU fallback
-        "CPU"            -> Color(0xFFFF1744)  // red — CPU fallback (should not happen in demo)
-        else             -> Color(0xFF757575)  // grey — not yet initialized
+fun NpuBadge(accelerator: String, inferenceMs: Long, modifier: Modifier = Modifier) {
+    val isNpu = accelerator.contains("NPU", ignoreCase = true) && !accelerator.contains("FAILED", ignoreCase = true)
+    val badgeColor = when {
+        isNpu             -> Color(0xFF0D4A1A)
+        accelerator == "CPU" -> Color(0xFF2A2A0A)
+        else              -> Color(0xFF4A0D0D)
     }
-
-    val textColor = when (accelerator) {
-        "GPU"  -> Color.Black   // yellow background needs dark text
-        else   -> Color.White
+    val textColor = when {
+        isNpu             -> Color(0xFF4CAF50)
+        accelerator == "CPU" -> Color(0xFFFFEB3B)
+        else              -> Color(0xFFEF5350)
     }
+    val label = if (inferenceMs > 0L) "LiteRT: $accelerator · ${inferenceMs}ms" else "LiteRT: $accelerator"
 
-    val label = if (accelerator == "—" || inferenceMs == 0L) {
-        accelerator
-    } else {
-        "$accelerator · ${inferenceMs}ms"
-    }
-
-    Box(
+    Text(
+        text = label,
+        color = textColor,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Medium,
+        fontFamily = FontFamily.Monospace,
         modifier = modifier
-            .background(backgroundColor, RoundedCornerShape(6.dp))
+            .background(badgeColor.copy(alpha = 0.85f), RoundedCornerShape(4.dp))
             .padding(horizontal = 8.dp, vertical = 4.dp)
-    ) {
-        Text(
-            text = label,
-            color = textColor,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace
-        )
-    }
+    )
 }
