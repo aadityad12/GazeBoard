@@ -17,9 +17,10 @@ import java.nio.FloatBuffer
  * Output 1 landmarks:     [1, 34, 2]
  * Output 2 gaze_pitchyaw: [1, 2] — pitch, yaw in radians
  *
- * Accelerator chain: NPU+GPU → CPU. All paths use the CompiledModel API
+ * NPU only — no CPU/GPU fallback. If NPU is unavailable, load() throws and the
+ * ViewModel transitions to AppState.ModelLoadError. All paths use CompiledModel API
  * (NOT the deprecated Interpreter), satisfying the LiteRT eligibility gate.
- * The active accelerator is displayed in the NPU badge UI.
+ * A warm-up inference is run at load time to trigger Hexagon JIT compilation.
  */
 class EyeGazeModel(private val context: Context) {
 

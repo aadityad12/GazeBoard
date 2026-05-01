@@ -28,10 +28,12 @@ import kotlinx.coroutines.withContext
  * Central ViewModel for GazeBoard.
  *
  * State machine:
+ *   ModelLoadError (NPU failed) — no further transitions
  *   Calibrating(step 0-3) → QuickPhrases → Spelling ↔ WordSelection
  *
  * Dwell logic: 1 second on same quadrant triggers selection.
  * 500ms cooldown after selection prevents double-triggers.
+ * Debug mode toggled via [toggleDebugMode] — shows live pipeline telemetry.
  */
 class GazeBoardViewModel : ViewModel() {
 

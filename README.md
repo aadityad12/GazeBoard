@@ -50,7 +50,7 @@ Look at letter groups to narrow your word (GazeSpeak layout):
 └─────────────┴─────────────┘
 ```
 
-After 2–4 gestures, the 5,000-word trie predictor narrows candidates. When ≤3 remain, they appear in quadrants for direct selection.
+After 2–4 gestures, the ALS-focused word predictor narrows candidates (~300 curated words covering medical, comfort, and communication needs). When ≤3 remain, they appear in quadrants for direct selection.
 
 ---
 
@@ -65,9 +65,10 @@ Front Camera → ML Kit FaceDetector → eye crop
 
 **LiteRT CompiledModel API (hackathon eligibility gate):**
 ```kotlin
+// NPU only — no CPU/GPU fallback
 val model = CompiledModel.create(
     context.assets, "eyegaze.tflite",
-    CompiledModel.Options(Accelerator.NPU, Accelerator.GPU)
+    CompiledModel.Options(Accelerator.NPU)
 )
 model.run(inputBuffers, outputBuffers)
 val (pitch, yaw) = outputBuffers[2].readFloat()

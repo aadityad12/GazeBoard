@@ -19,9 +19,10 @@
 - Calibration: 4-point corner calibration saved to SharedPreferences
 
 **Say:**
-- "The EyeGaze model runs via LiteRT's CompiledModel API with NPU+GPU preference"
+- "The EyeGaze model runs via LiteRT's CompiledModel API exclusively on the Snapdragon NPU — no CPU fallback"
 - "We use KEEP_ONLY_LATEST backpressure — no queue buildup under load"
 - "EMA smoothing at α=0.7 balances responsiveness and jitter"
+- "NPU warm-up at startup triggers LiteRT JIT compilation, so demo day inference is always cached"
 
 ## Application Use-Case & Innovation (25 pts)
 **Lead with:** "$15,000 device replaced by a free app on a phone you already own"
