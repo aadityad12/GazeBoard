@@ -1,40 +1,35 @@
 package com.gazeboard.ui.components
 
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-
-private val IdleBg     = Color(0xFF0D1B2A)
-private val HoveredBg  = Color(0xFF1A3A5C)
-private val ActiveBorder = Color(0xFF00BFFF)
-private val IdleBorder   = Color(0xFF2A4A6A)
-private val LabelColor   = Color(0xFFE8F4FD)
-private val SubLabelColor = Color(0xFF8AAECA)
+import com.gazeboard.ui.theme.GlassCardShape
+import com.gazeboard.ui.theme.GlassColors
+import com.gazeboard.ui.theme.glassPanel
 
 /**
  * A single full-quadrant cell for the 2×2 gaze layout.
  *
- * Shows a dwell progress ring around the border when active.
- * isActive drives the ring; dwellProgress (0..1) fills the ring.
+ * isActive and dwellProgress are still driven by the existing ViewModel dwell
+ * state; this component only changes the visual treatment.
  */
 @Composable
 fun QuadrantCell(
@@ -44,60 +39,93 @@ fun QuadrantCell(
     dwellProgress: Float,
     modifier: Modifier = Modifier
 ) {
-    val bgColor by animateColorAsState(
-        targetValue = if (isActive) HoveredBg else IdleBg,
+    val activeAlpha by animateFloatAsState(
+        targetValue = if (isActive) 1f else 0f,
         animationSpec = tween(150),
-        label = "quadrantBg"
+        label = "quadrantActive"
     )
-    val borderAlpha by animateFloatAsState(
-        targetValue = if (isActive) 1f else 0.4f,
-        animationSpec = tween(150),
-        label = "borderAlpha"
-    )
+    val normalizedProgress = dwellProgress.coerceIn(0f, 1f)
+    val isLetterGroup = label.any { it == '\n' } || label.count { it == ' ' } >= 4
 
     Box(
         modifier = modifier
-            .background(bgColor)
-            .border(
-                width = if (isActive) 2.dp else 1.dp,
-                color = if (isActive) ActiveBorder.copy(alpha = borderAlpha) else IdleBorder
+            .padding(8.dp)
+            .glassPanel(
+                shape = GlassCardShape,
+                fill = if (isActive) GlassColors.GlassStrong else GlassColors.Glass,
+                border = if (isActive) GlassColors.BorderStrong else GlassColors.Border
             )
             .drawWithContent {
-                drawContent()
-                if (isActive && dwellProgress > 0f) {
-                    val stroke = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round)
-                    val inset = 3.dp.toPx()
-                    drawArc(
-                        color = ActiveBorder,
-                        startAngle = -90f,
-                        sweepAngle = 360f * dwellProgress,
-                        useCenter = false,
-                        style = stroke,
-                        topLeft = androidx.compose.ui.geometry.Offset(inset, inset),
-                        size = androidx.compose.ui.geometry.Size(
-                            size.width - inset * 2, size.height - inset * 2
-                        )
+                val corner = 36.dp.toPx()
+                if (activeAlpha > 0f) {
+                    drawRoundRect(
+                        color = Color.White.copy(alpha = 0.06f * activeAlpha),
+                        cornerRadius = CornerRadius(corner, corner)
                     )
+                }
+                if (isActive && normalizedProgress > 0f) {
+                    val overlayHeight = size.height * normalizedProgress
+                    drawRoundRect(
+                        color = Color.White.copy(alpha = 0.16f),
+                        topLeft = Offset(0f, size.height - overlayHeight),
+                        size = Size(size.width, overlayHeight),
+                        cornerRadius = CornerRadius(corner, corner)
+                    )
+                }
+
+                drawContent()
+
+                if (isActive) {
+                    val inset = 2.dp.toPx()
+                    val strokeWidth = if (normalizedProgress > 0f) 2.5.dp.toPx() else 1.5.dp.toPx()
+                    drawRoundRect(
+                        color = Color.White.copy(alpha = 0.30f + 0.22f * activeAlpha),
+                        topLeft = Offset(inset, inset),
+                        size = Size(size.width - inset * 2, size.height - inset * 2),
+                        cornerRadius = CornerRadius(corner, corner),
+                        style = Stroke(width = strokeWidth)
+                    )
+                    if (normalizedProgress > 0f) {
+                        drawArc(
+                            color = Color.White.copy(alpha = 0.82f),
+                            startAngle = -90f,
+                            sweepAngle = 360f * normalizedProgress,
+                            useCenter = false,
+                            style = Stroke(width = 5.dp.toPx()),
+                            topLeft = Offset(8.dp.toPx(), 8.dp.toPx()),
+                            size = Size(size.width - 16.dp.toPx(), size.height - 16.dp.toPx())
+                        )
+                    }
                 }
             },
         contentAlignment = Alignment.Center
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = label,
-                color = LabelColor,
-                fontSize = 42.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center
-            )
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .padding(horizontal = 20.dp)
+                .widthIn(max = 360.dp)
+        ) {
+            if (label.isNotBlank()) {
+                Text(
+                    text = label,
+                    color = GlassColors.TextPrimary,
+                    fontSize = if (isLetterGroup) 30.sp else 48.sp,
+                    fontWeight = if (isLetterGroup) FontWeight.Light else FontWeight.Medium,
+                    letterSpacing = if (isLetterGroup) 3.sp else 0.sp,
+                    lineHeight = if (isLetterGroup) 43.sp else 54.sp,
+                    textAlign = TextAlign.Center
+                )
+            }
             if (subLabel.isNotEmpty()) {
                 Text(
                     text = subLabel,
-                    color = SubLabelColor,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Normal,
+                    color = GlassColors.TextMuted,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.2.sp,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 8.dp)
+                    modifier = Modifier.padding(top = 10.dp)
                 )
             }
         }

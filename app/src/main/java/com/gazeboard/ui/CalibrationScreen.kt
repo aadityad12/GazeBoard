@@ -1,13 +1,21 @@
 package com.gazeboard.ui
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,14 +35,14 @@ import androidx.compose.ui.unit.sp
 import com.gazeboard.state.AppState
 import com.gazeboard.ui.components.DebugOverlay
 import com.gazeboard.ui.components.SettingsOverlay
-
-private val ScreenBg    = Color(0xFF030B14)
-private val TargetColor = Color(0xFF00BFFF)
+import com.gazeboard.ui.theme.GlassColors
+import com.gazeboard.ui.theme.glassClickable
+import com.gazeboard.ui.theme.glassPill
 
 /**
  * Four-corner calibration screen.
  * User looks at each corner dot for 1.5 s to commit that corner.
- * Order: Top-Left → Top-Right → Bottom-Left → Bottom-Right.
+ * Order: Top-Left -> Top-Right -> Bottom-Left -> Bottom-Right.
  */
 @Composable
 fun CalibrationScreen(
@@ -51,95 +59,124 @@ fun CalibrationScreen(
     modifier: Modifier = Modifier
 ) {
     var settingsOpen by remember { mutableStateOf(false) }
-    val cornerNames = listOf("Top-Left", "Top-Right", "Bottom-Left", "Bottom-Right")
-    val currentCorner = cornerNames.getOrElse(state.step) { "Done" }
+    val pulse by rememberInfiniteTransition(label = "calibrationPulse").animateFloat(
+        initialValue = 0.92f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1600),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "calibrationPulseScale"
+    )
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(ScreenBg)
+            .background(GlassColors.Background)
             .systemBarsPadding()
     ) {
-        // Instruction text
-        Text(
-            text = "Calibration  ${state.step + 1} / 4\nLook at the  $currentCorner  target",
-            color = Color(0xFF8AAECA),
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Normal,
-            textAlign = TextAlign.Center,
-            lineHeight = 30.sp,
-            modifier = Modifier
-                .align(Alignment.Center)
-                .padding(32.dp)
-        )
-
-        // Corner dots + dwell arcs
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val dotRadius  = 18f
-            val ringRadius = 46f
-            val margin     = 88f
+        Canvas(modifier = Modifier.matchParentSize()) {
+            val activeIndex = state.step.coerceIn(0, 3)
+            val targetRadius = 48.dp.toPx()
+            val innerRadius = 24.dp.toPx()
+            val dotRadius = 7.dp.toPx()
 
             val corners = listOf(
-                Offset(margin, margin),
-                Offset(size.width - margin, margin),
-                Offset(margin, size.height - margin),
-                Offset(size.width - margin, size.height - margin)
+                Offset(size.width * 0.15f, size.height * 0.15f),
+                Offset(size.width * 0.85f, size.height * 0.15f),
+                Offset(size.width * 0.15f, size.height * 0.85f),
+                Offset(size.width * 0.85f, size.height * 0.85f)
             )
 
             corners.forEachIndexed { index, pos ->
-                val isActive = index == state.step
-                val alpha    = if (isActive) 1f else 0.22f
+                val isActive = index == activeIndex
+                val alpha = if (isActive) 1f else 0.24f
+                val activeRadius = if (isActive) targetRadius * pulse else targetRadius
 
-                // Ring outline
                 drawCircle(
-                    color = TargetColor.copy(alpha = alpha * 0.35f),
-                    radius = ringRadius,
+                    color = Color.White.copy(alpha = 0.05f * alpha),
+                    radius = activeRadius,
+                    center = pos
+                )
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.28f * alpha),
+                    radius = activeRadius,
                     center = pos,
-                    style = Stroke(width = 1.5f)
+                    style = Stroke(width = 1.dp.toPx())
+                )
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.08f * alpha),
+                    radius = innerRadius,
+                    center = pos
+                )
+                drawCircle(
+                    color = Color.White.copy(alpha = alpha),
+                    radius = dotRadius,
+                    center = pos
                 )
 
-                // Dwell progress arc
                 if (isActive && state.dwellProgress > 0f) {
+                    val arcRadius = targetRadius + 7.dp.toPx()
                     drawArc(
-                        color = TargetColor,
+                        color = Color.White.copy(alpha = 0.88f),
                         startAngle = -90f,
-                        sweepAngle = 360f * state.dwellProgress,
+                        sweepAngle = 360f * state.dwellProgress.coerceIn(0f, 1f),
                         useCenter = false,
-                        style = Stroke(width = 6f, cap = StrokeCap.Round),
-                        topLeft = Offset(pos.x - ringRadius, pos.y - ringRadius),
-                        size = Size(ringRadius * 2, ringRadius * 2)
+                        style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round),
+                        topLeft = Offset(pos.x - arcRadius, pos.y - arcRadius),
+                        size = Size(arcRadius * 2, arcRadius * 2)
                     )
                 }
-
-                // Center dot
-                drawCircle(color = TargetColor.copy(alpha = alpha), radius = dotRadius, center = pos)
-                drawCircle(color = Color.White.copy(alpha = alpha), radius = dotRadius * 0.35f, center = pos)
             }
         }
 
-        // Face indicator
-        FaceIndicator(
-            faceDetected = faceDetected,
-            modifier = Modifier.align(Alignment.TopEnd).padding(12.dp)
-        )
-
-        // Step progress dots
-        Text(
-            text = (0..3).joinToString("  ") { if (it < state.step) "●" else if (it == state.step) "◉" else "○" },
-            color = TargetColor,
-            fontSize = 20.sp,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 36.dp)
-        )
-
-        // Gear icon → settings overlay
-        TextButton(
-            onClick = { settingsOpen = true },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp)
+        Column(
+            modifier = Modifier.align(Alignment.Center),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("⚙", color = Color(0xFF4A7A9A), fontSize = 22.sp)
+            Text(
+                text = "Look at the dot",
+                color = GlassColors.TextPrimary,
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Light,
+                textAlign = TextAlign.Center
+            )
+            Row(
+                modifier = Modifier.padding(top = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                repeat(4) { index ->
+                    Box(
+                        modifier = Modifier
+                            .size(width = if (index == state.step) 24.dp else 8.dp, height = 8.dp)
+                            .glassPill(
+                                fill = if (index == state.step) Color.White else Color.White.copy(alpha = 0.18f),
+                                border = Color.Transparent,
+                                shadowElevation = 2.dp
+                            )
+                    )
+                }
+            }
         }
 
-        // Debug overlay
+        FaceIndicator(
+            faceDetected = faceDetected,
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 24.dp, end = 24.dp)
+        )
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(24.dp)
+                .size(46.dp)
+                .glassPill(shadowElevation = 8.dp)
+                .glassClickable { settingsOpen = true },
+            contentAlignment = Alignment.Center
+        ) {
+            Text("⚙", color = GlassColors.TextPrimary, fontSize = 20.sp)
+        }
+
         if (debugMode) {
             DebugOverlay(
                 fps = fps,
@@ -150,7 +187,7 @@ fun CalibrationScreen(
                 accelerator = accelerator,
                 faceDetected = faceDetected,
                 appState = state,
-                modifier = Modifier.align(Alignment.TopStart).padding(12.dp)
+                modifier = Modifier.align(Alignment.TopStart).padding(24.dp)
             )
         }
     }

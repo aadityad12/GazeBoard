@@ -1,7 +1,6 @@
 package com.gazeboard.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -13,26 +12,31 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.gazeboard.ui.theme.GlassCardShape
+import com.gazeboard.ui.theme.GlassColors
+import com.gazeboard.ui.theme.glassClickable
+import com.gazeboard.ui.theme.glassPanel
+import com.gazeboard.ui.theme.glassPill
 
 /**
- * Modal settings overlay (glass aesthetic).
- * Shown when user activates the gear icon on any main screen.
- * Contains NPU metric, Debug Mode toggle, Recalibrate action, and Close.
+ * Modal settings overlay.
+ *
+ * The actions are the same as before: close, recalibrate, and toggle debug mode.
  */
 @Composable
 fun SettingsOverlay(
@@ -50,76 +54,80 @@ fun SettingsOverlay(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xCC000000))
-            .clickable(indication = null, interactionSource = scrimInteraction) { onClose() },
+            .background(Color(0xAA000000))
+            .clickable(indication = null, interactionSource = scrimInteraction) { onClose() }
+            .padding(24.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(
             modifier = Modifier
-                .padding(horizontal = 32.dp)
-                .background(Color(0xFF0D1F35), RoundedCornerShape(16.dp))
-                .border(1.dp, Color(0x3300BFFF), RoundedCornerShape(16.dp))
-                .padding(24.dp)
+                .widthIn(max = 500.dp)
+                .glassPanel(shape = GlassCardShape, fill = GlassColors.Glass, border = GlassColors.BorderStrong)
                 .clickable(indication = null, interactionSource = panelInteraction) { /* absorb */ }
         ) {
-            Text(
-                text = "Settings",
-                color = Color(0xFFE8F4FD),
-                fontSize = 22.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-
-            Spacer(Modifier.height(16.dp))
-
-            // NPU metric badge
-            val npuLabel = if (inferenceMs > 0L) "$accelerator · ${inferenceMs}ms" else accelerator
-            val npuColor = if (accelerator.contains("NPU", ignoreCase = true)) Color(0xFF4CAF50) else Color(0xFFFFEB3B)
-            Text(
-                text = "LiteRT  $npuLabel",
-                color = npuColor,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                fontFamily = FontFamily.Monospace,
+            Row(
                 modifier = Modifier
-                    .background(Color(0xFF080F1A), RoundedCornerShape(6.dp))
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-            )
+                    .fillMaxWidth()
+                    .padding(28.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .glassPill(shadowElevation = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("⚙", color = GlassColors.TextPrimary, fontSize = 21.sp)
+                    }
+                    Text(
+                        text = "Settings",
+                        color = GlassColors.TextPrimary,
+                        fontSize = 30.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.sp
+                    )
+                }
+                NpuBadge(accelerator = accelerator, inferenceMs = inferenceMs)
+            }
 
-            Spacer(Modifier.height(20.dp))
-            HorizontalDivider(color = Color(0x1A00BFFF))
-            Spacer(Modifier.height(16.dp))
+            HorizontalDivider(color = GlassColors.Border)
 
-            // Debug Mode toggle
-            SettingsToggle(
-                label = "Debug Mode",
-                checked = debugMode,
-                onCheckedChange = { onToggleDebug() }
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 28.dp, vertical = 26.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp)
+            ) {
+                SettingsToggle(
+                    label = "Debug Mode",
+                    checked = debugMode,
+                    onToggle = onToggleDebug
+                )
+                SettingsToggle(
+                    label = "Dark Mode",
+                    checked = true,
+                    onToggle = {}
+                )
+            }
 
-            Spacer(Modifier.height(8.dp))
-
-            // Dark Mode toggle (app is always dark — informational only)
-            SettingsToggle(
-                label = "Dark Mode",
-                checked = true,
-                onCheckedChange = { }
-            )
-
-            Spacer(Modifier.height(20.dp))
-            HorizontalDivider(color = Color(0x1A00BFFF))
-            Spacer(Modifier.height(16.dp))
+            HorizontalDivider(color = GlassColors.Border)
 
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 TextButton(
                     onClick = onClose,
                     modifier = Modifier
                         .weight(1f)
-                        .background(Color(0xFF0D1B2A), RoundedCornerShape(8.dp))
+                        .height(62.dp)
+                        .glassPill(shadowElevation = 8.dp)
                 ) {
-                    Text("✕  Close", color = Color(0xFF8AAECA), fontSize = 14.sp)
+                    Text("Close", color = GlassColors.TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                 }
                 TextButton(
                     onClick = {
@@ -128,9 +136,10 @@ fun SettingsOverlay(
                     },
                     modifier = Modifier
                         .weight(1f)
-                        .background(Color(0xFF0A2030), RoundedCornerShape(8.dp))
+                        .height(62.dp)
+                        .glassPill(shadowElevation = 8.dp)
                 ) {
-                    Text("↺  Recalibrate", color = Color(0xFF00BFFF), fontSize = 14.sp)
+                    Text("Recalibrate", color = GlassColors.TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                 }
             }
         }
@@ -138,22 +147,45 @@ fun SettingsOverlay(
 }
 
 @Composable
-private fun SettingsToggle(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+private fun SettingsToggle(label: String, checked: Boolean, onToggle: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassClickable { onToggle() },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text(label, color = Color(0xFFB0C8E0), fontSize = 16.sp)
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color(0xFF00BFFF),
-                checkedTrackColor = Color(0xFF1A4A6A),
-                uncheckedThumbColor = Color(0xFF4A6A8A),
-                uncheckedTrackColor = Color(0xFF0D1B2A)
-            )
+        Text(
+            text = label,
+            color = GlassColors.TextPrimary,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Light
         )
+        Box(
+            modifier = Modifier
+                .size(width = 76.dp, height = 38.dp)
+                .glassPill(
+                    fill = if (checked) GlassColors.GlassPressed else GlassColors.Glass,
+                    border = if (checked) GlassColors.BorderStrong else GlassColors.Border,
+                    shadowElevation = 4.dp
+                )
+                .padding(3.dp),
+            contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(if (checked) Color.White else Color.White.copy(alpha = 0.22f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (checked) "ON" else "OFF",
+                    color = if (checked) Color.Black else GlassColors.TextMuted,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Black
+                )
+            }
+        }
     }
 }
