@@ -1,70 +1,33 @@
-# GazeBoard — 3-Minute Demo Script
+# Target-device demo checklist
 
-## Opening (30 seconds)
+This checklist is for manually exercising the current prototype. It does not replace a test suite and should not be used to claim accuracy or performance results.
 
-"Imagine you can think, feel, and understand everything — but you can't move. You can't speak. The only thing you control is where you look. That's life with ALS.
+## Before starting
 
-Today, the devices that give these people their voice cost $15,000 and require months of insurance approval. We built one that runs on a phone most people already own."
+1. Use a Qualcomm SM8750 Android device with the front camera unobstructed.
+2. Install with `./gradlew :app:installDebug` so the device-targeted NPU feature is included.
+3. Start `adb logcat -s GazeBoard` and launch `com.gazeboard/.MainActivity`.
+4. Confirm that the app receives camera permission.
+5. Confirm that Logcat reports successful `CompiledModel` creation on the requested NPU. If it does not, record the full error instead of continuing with a performance claim.
 
-**[Hold up the S25 Ultra]**
+## Manual flow
 
----
+1. Complete all four displayed calibration targets.
+2. Hold gaze on **Yes**, **No**, and **Help** separately. For each selection, check the dwell progress, spoken output, and sentence display.
+3. Select **More** to enter spelling mode.
+4. Enter the quadrant sequence for a word present near the top of `app/src/main/assets/words.txt`.
+5. When two or three candidates remain, select one and confirm that the word is spoken.
+6. Open settings, enable the debug overlay, and record the displayed values only as observations from this device and run.
+7. Recalibrate and confirm that the four-target flow starts again.
 
-## Quick Phrases Demo (45 seconds)
+## Evidence to retain
 
-"The home screen has four phrases. Alex just looks at the one he wants."
+For a reproducible device-validation record, capture:
 
-**[Look at YES → phone speaks "Yes"]**
+- device model, system-on-chip, Android version, and build SHA;
+- whether the app was a debug or release build;
+- Logcat from model loading through the final selection;
+- raw observations, failures, and number of attempts;
+- the exact method used for any latency or accuracy calculation.
 
-"That's it. One look, one second."
-
-**[Look at HELP → phone speaks "Help"]**
-
-"And the NPU badge here — that's the LiteRT CompiledModel API running on the Snapdragon NPU. Sub-millisecond inference, fully on-device."
-
----
-
-## Spell Mode Demo (60 seconds)
-
-"But what if Alex needs to say something more specific? He looks at MORE."
-
-**[Look at MORE ► for 1 second → SpellScreen appears]**
-
-"Now he sees letter groups — same layout as GazeSpeak from Microsoft Research. To spell HELP, he looks at top-right for H..."
-
-**[Look at top-right (H-M) → gesture recorded]**
-
-"...then bottom-left for E..."
-
-**[Look at top-left (A-G) → "A-G" gesture recorded]**
-
-"...the app narrows predictions with every gesture. When 3 or fewer words match..."
-
-**[Candidates appear in quadrants]**
-
-"...Alex looks at his word."
-
-**[Look at correct quadrant → TTS speaks the word]**
-
----
-
-## Technical Slide (30 seconds)
-
-"Under the hood: ML Kit detects the eye region in each camera frame. Qualcomm's EyeGaze neural network — loaded via LiteRT's CompiledModel API — estimates pitch and yaw. After 4-corner calibration, those angles map to quadrants. The whole pipeline runs at 15fps, fully on-device, with zero cloud dependency."
-
----
-
-## Closing (15 seconds)
-
-"Microsoft proved gaze gestures work in 2017. Google proved LLMs can accelerate AAC in 2024. We rebuilt both with a dedicated gaze estimation model on the Hexagon NPU. Every S25 Ultra owner already has this hardware. We just wrote the software."
-
----
-
-## Backup Plan
-
-If live demo fails: play pre-recorded video showing:
-1. Calibration (15 seconds)
-2. YES / NO quick phrases (30 seconds)
-3. Spelling "help" with prediction (60 seconds)
-
-Record backup video before demo day.
+No such device-validation record is currently checked into the repository.

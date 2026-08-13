@@ -1,254 +1,149 @@
-# GazeBoard — Technical Architecture
+# GazeBoard architecture
 
-## System Diagram
+This document describes the implementation on the `main` branch. It intentionally excludes planned features and unmeasured performance claims.
 
-```
-+--------------------------------------------------------------+
-|                   Samsung Galaxy S25 Ultra                   |
-|                                                              |
-|  Front Camera (640×480, RGBA_8888, ~15fps)                   |
-|      |                                                       |
-|      v                                                       |
-|  CameraX ImageAnalysis                                       |
-|      | STRATEGY_KEEP_ONLY_LATEST, background executor        |
-|      | Rotate frame (imageProxy.imageInfo.rotationDegrees)   |
-|      v                                                       |
-|  EyeDetector (ML Kit)                                        |
-|      | FaceDetectorOptions: PERFORMANCE_MODE_FAST            |
-|      |   LANDMARK_MODE_ALL, minFaceSize=0.15                 |
-|      | Crops left eye: interEyeDist × 0.75 region            |
-|      | Scale to 160×96, BT.601 grayscale → [0,1]             |
-|      | Returns DetectResult (buffer, eyeCenter, detectMs)    |
-|      v                                                       |
-|  FloatBuffer[15360] (96×160 grayscale)                       |
-|      v                                                       |
-|  EyeGazeModel (LiteRT CompiledModel — NPU only)              |
-|      | CompiledModel.create(assets, "eyegaze.tflite",         |
-|      |     CompiledModel.Options(Accelerator.NPU))            |
-|      | NPU warm-up at load time (JIT cache)                  |
-|      | Output 2: [pitch, yaw] in radians                     |
-|      v                                                       |
-|  GazeAngles(pitch, yaw)                                      |
-|      v                                                       |
-|  GazeEstimator                                               |
-|      | EMA smoothing α=0.7                                   |
-|      | CalibrationEngine.mapToQuadrant(pitch, yaw) → 1..4   |
-|      v                                                       |
-|  GazeResult(quadrant, inferenceMs, accelerator,              |
-|              rawPitch, rawYaw, faceDetectMs)                 |
-|      v                                                       |
-|  GazeBoardViewModel                                          |
-|      | Dwell timer (1.0s threshold, 0.5s cooldown)           |
-|      | State machine transitions                             |
-|      | TriePredictor.predict(gestureSequence) → candidates   |
-|      | TtsManager.speak()                                    |
-|      v                                                       |
-|  QuickPhrasesScreen / SpellScreen / CalibrationScreen        |
-+--------------------------------------------------------------+
+## Runtime data flow
+
+```mermaid
+flowchart TD
+    A["CameraX front-camera ImageProxy"] --> B["Convert RGBA frame to Bitmap"]
+    B --> C["Apply ImageProxy rotation"]
+    C --> D["ML Kit FaceDetector"]
+    D -->|"no face or missing eye landmarks"| Z["GazeResult with quadrant 0"]
+    D --> E["Crop anatomical left eye"]
+    E --> F["Resize to 160 x 96 and normalize grayscale"]
+    F --> G["LiteRT CompiledModel on requested NPU"]
+    G -->|"inference failure"| Z
+    G --> H["Pitch and yaw"]
+    H --> I["Exponential moving-average smoothing"]
+    I --> J["CalibrationEngine quadrant mapping"]
+    J --> K["GazeResult with quadrant 1 to 4"]
+    K --> L["GazeBoardViewModel dwell and state logic"]
+    Z --> L
+    L --> M["Compose UI state"]
+    L --> N["Android TextToSpeech"]
 ```
 
----
+`CameraManager` uses a single-thread executor for frame analysis and `STRATEGY_KEEP_ONLY_LATEST` so stale frames do not accumulate. UI state is exposed through `StateFlow`. Camera binding and preview-provider operations are switched to the main dispatcher.
 
-## State Machine
+## Frame processing
 
-```
-                        ┌──────────────────┐
-           NPU load     │  ModelLoadError   │
-           fails  ───→  │  (Retry button)   │
-                        └──────────────────┘
+### Camera acquisition
 
-AppStart ──→  Calibrating(step: 0..3)
-                  │ (4 corners complete)
-                  ▼
-             QuickPhrases ◄────────── startRecalibration()
-              │       │
-       Q1/Q2/Q3   Q4 (MORE)
-       speaks    │
-       phrase    ▼
-              Spelling ◄─── confirmWord()
-              │
-        2-3 candidates
-              │
-              ▼
-         WordSelection ──→ Q4=BACK ──→ Spelling
-              │
-         Q1/Q2/Q3
-              │
-         confirmWord() ──→ Spelling
+`CameraManager` binds the front camera to the activity lifecycle with an `ImageAnalysis` use case. It requests 640 x 480 RGBA frames, converts each `ImageProxy` to a bitmap, rotates it according to `rotationDegrees`, and always closes the proxy in a `finally` block.
+
+The code creates a CameraX `Preview` use case, but the current Compose screens do not attach its surface provider. Users therefore do not see a live preview in the rendered UI.
+
+### Eye detection and preprocessing
+
+`EyeDetector` configures ML Kit face detection for fast performance, all landmarks, and a minimum face size of 0.15. It uses the first detected face and requires both eye landmarks.
+
+The crop is centered on the anatomical left-eye landmark. Its width is 0.75 times the detected inter-eye distance, and its height preserves the model's 160:96 aspect ratio. The crop is resized to 160 x 96 pixels and converted with:
+
+```text
+gray = (0.299R + 0.587G + 0.114B) / 255
 ```
 
----
+The result is a 15,360-element `FloatBuffer`. Face-detection failure, missing landmarks, an inter-eye distance below eight pixels, or an invalid crop ends processing for that frame with quadrant `0`.
 
-## Inference Pipeline — Latency Budget
+### Model execution
 
-Target: **≥10 FPS end-to-end** (visible in debug overlay).
+`EyeGazeModel.load()` creates a LiteRT `CompiledModel` with `Accelerator.NPU`. It does not configure CPU or GPU fallback. A zero-filled inference is attempted after loading as a warm-up; warm-up failure is logged but does not abort loading.
 
-| Stage | Target | Implementation |
-|-------|--------|----------------|
-| Camera → ImageProxy | ~0ms | CameraX hardware pipeline |
-| Frame rotation | ~1ms | `Matrix.postRotate()` |
-| ML Kit eye detect | ~20–40ms | CPU, `PERFORMANCE_MODE_FAST` |
-| Eye crop + resize to 160×96 | ~2ms | `Bitmap.createScaledBitmap()` |
-| BT.601 grayscale normalize | ~1ms | CPU pixel loop |
-| EyeGaze NPU inference | ~8–15ms | Hexagon NPU via LiteRT `CompiledModel` |
-| EMA smoothing | <1ms | CPU arithmetic |
-| CalibrationEngine.mapToQuadrant | <1ms | Two comparisons |
-| StateFlow emission | <1ms | Kotlin coroutine |
+For each valid eye crop, `runInference()` writes the input buffer, runs the compiled model, and reads output index `2` as pitch and yaw. Model creation failure moves the application to `ModelLoadError`. Per-frame inference failure produces a no-gaze result and leaves the app running.
 
-`STRATEGY_KEEP_ONLY_LATEST` drops frames when inference is slower than camera rate, bounding latency.
+The code labels the accelerator as `NPU` after `CompiledModel.create()` returns. That label records the requested and successfully created path; this repository does not include an independent hardware-counter trace.
 
----
+## Gaze result contract
 
-## EyeGaze Model Contract
+`GazeEstimator.GazeResult` is the boundary between frame processing and application logic.
 
-**File:** `app/src/main/assets/eyegaze.tflite`  
-**Source:** `qualcomm/EyeGaze` on HuggingFace
+| Field | Meaning |
+| --- | --- |
+| `quadrant` | `0` for no usable gaze result, otherwise `1` top-left, `2` top-right, `3` bottom-left, or `4` bottom-right |
+| `confidence` | `0.0` on failure and `1.0` on a model result; this is not a calibrated probability |
+| `inferenceMs` | Wall-clock duration around the latest `CompiledModel.run()` call |
+| `accelerator` | App-assigned accelerator label, currently `NPU` after a successful load |
+| `rawPitch`, `rawYaw` | Unsmoothed model outputs used for calibration and telemetry |
+| `faceDetectMs` | Wall-clock duration around ML Kit face detection |
 
-| Tensor | Shape | Meaning |
-|--------|-------|---------|
-| Input | `FloatBuffer[15360]` | 96×160 grayscale [0,1] eye crop |
-| Output 0 | `[1,3,34,48,80]` | Heatmaps (allocated but unused) |
-| Output 1 | `[1,34,2]` | Landmarks (allocated but unused) |
-| Output 2 | `[1,2]` | **[pitch, yaw] in radians** |
+The estimator applies an exponential moving average before quadrant mapping:
 
-Direction conventions:
-```
-pitch > 0 → looking down    pitch < 0 → looking up
-yaw   > 0 → looking right   yaw   < 0 → looking left
+```text
+smoothed = 0.7 * current + 0.3 * previous
 ```
 
----
+The first valid sample initializes the smoothed values directly. A reset clears that state.
 
-## CompiledModel API Usage
+## Calibration
 
-```kotlin
-// EyeGazeModel.kt
-val mdl = CompiledModel.create(
-    context.assets,
-    "eyegaze.tflite",
-    CompiledModel.Options(Accelerator.NPU)   // NPU only, no fallback
-)
-val inputs  = mdl.createInputBuffers()
-val outputs = mdl.createOutputBuffers()
+`CalibrationEngine` collects raw pitch and yaw values while each of four corner targets is displayed. After a 1.5-second dwell, it commits the average of the accumulated samples for that target. Once all four targets are committed, it averages all four pitch values into `pitchMid` and all four yaw values into `yawMid`.
 
-// Warm-up (triggers JIT compilation on Hexagon DSP):
-inputs[0].writeFloat(FloatArray(INPUT_SIZE) { 0f })
-mdl.run(inputs, outputs)
+Quadrants are then determined with two comparisons:
 
-// Per-frame inference:
-inputs[0].writeFloat(inputArray)          // float[15360]
-mdl.run(inputs, outputs)
-val pitchYaw = outputs[2].readFloat()     // [pitch, yaw]
+```text
+pitch < pitchMid and yaw < yawMid  -> top-left
+pitch < pitchMid and yaw >= yawMid -> top-right
+pitch >= pitchMid and yaw < yawMid -> bottom-left
+otherwise                          -> bottom-right
 ```
 
-If `CompiledModel.create()` throws, `GazeBoardViewModel` catches it and sets `AppState.ModelLoadError`.
+The two midpoint values and a calibrated flag are persisted in `SharedPreferences`. Resetting calibration clears in-memory state, but the reset method does not remove the previously stored preference values immediately. A completed replacement calibration overwrites them.
 
----
+This is threshold calibration, not an affine mapping. It does not estimate screen coordinates, curvature, head-pose compensation, or calibration quality.
 
-## Eye Crop Preprocessing
+## Selection and application state
 
-```
-ImageProxy (RGBA_8888, 640×480 rotated to portrait)
-    │
-    v
-toBitmap()
-    │
-    v
-ML Kit FaceDetector (Tasks.await)
-    │  → FaceLandmark.LEFT_EYE position
-    │  → FaceLandmark.RIGHT_EYE position
-    │  → inter-eye distance
-    │
-    v
-Crop region: leftEyePos ± (interEyeDist × 0.75 / 2)
-    │  (clamped to image bounds)
-    │
-    v
-Bitmap.createScaledBitmap(width=160, height=96)
-    │
-    v
-BT.601 luma: 0.299R + 0.587G + 0.114B, normalized to [0,1]
-    │
-    v
-FloatBuffer[15360] (row-major H×W)
+The ViewModel starts in `Calibrating` while it initializes the model and camera. A saved calibration changes the state to `QuickPhrases` after initialization.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Calibrating
+    Calibrating --> ModelLoadError: NPU model creation fails
+    Calibrating --> QuickPhrases: four corners committed
+    Calibrating --> QuickPhrases: saved thresholds restored
+    QuickPhrases --> QuickPhrases: select Yes, No, or Help
+    QuickPhrases --> Spelling: select More
+    Spelling --> Spelling: more than three prefix matches
+    Spelling --> WordSelection: two or three prefix matches
+    Spelling --> Spelling: no matches, remove last gesture
+    Spelling --> Spelling: one match, confirm word
+    WordSelection --> Spelling: select a candidate
+    WordSelection --> Spelling: select Back
+    QuickPhrases --> Calibrating: recalibrate
+    Spelling --> Calibrating: recalibrate
+    WordSelection --> Calibrating: recalibrate
 ```
 
-**Note**: ML Kit `LEFT_EYE` is the eye on the LEFT side of the (non-mirrored, face-to-face) image. This is the subject's anatomical left eye. The `PreviewView` shows a mirrored (selfie) view; the overlay in `CameraPreviewPip` flips X to compensate.
+For communication screens, gaze must remain in the same nonzero quadrant for one second. Losing the face or moving to another quadrant resets progress. After a selection, input is ignored for 500 ms.
 
----
+Quick-phrase selections append text to the displayed sentence and speak the selected phrase. Confirmed spelling candidates append the word and speak that word. Methods exist to speak or clear the accumulated sentence, but no current UI control calls them.
 
-## EMA Smoothing
+## Word prediction
 
-```kotlin
-// GazeEstimator.kt
-private val alpha = 0.7f
+`TriePredictor` is named for the `WordPredictor` abstraction, but its current implementation is a linear scan over precomputed `(word, gestureCode)` pairs rather than a trie data structure.
 
-smoothedPitch = alpha * rawPitch + (1f - alpha) * smoothedPitch
-smoothedYaw   = alpha * rawYaw   + (1f - alpha) * smoothedYaw
-```
+| Quadrant | Letters |
+| --- | --- |
+| 1 | A through G |
+| 2 | H through M |
+| 3 | N through S |
+| 4 | T through Z |
 
-α=0.7 weights the current frame heavily (~2-3 frame time constant at 15fps). This is intentionally responsive to avoid significant lag in gaze tracking. The 1-second dwell threshold absorbs frame-level jitter.
+The ordered `words.txt` asset has 378 nonempty rows, including one duplicated row. `predict()` returns the first five entries whose full gesture code begins with the selected sequence. The ViewModel shows a word-selection screen only when two or three results remain, and automatically confirms a sole result.
 
----
+## Packaging
 
-## Calibration System
+The app is arm64-only and targets Android API 31 or newer. `qualcomm_runtime_v79` is an install-time dynamic-feature module selected for device groups whose system-on-chip manufacturer and model match Qualcomm or QTI SM8750. The module contains the LiteRT Qualcomm compiler and dispatch plugins plus QAIRT shared libraries.
 
-**Protocol**: User looks at 4 screen corners in order: TL → TR → BL → BR. At each corner the app dwells for 1.5 seconds, collecting raw pitch/yaw samples throughout. After all 4 corners are committed, the midpoint thresholds are computed.
+Because those libraries are in a dynamic feature, directly installing `app/build/outputs/apk/debug/app-debug.apk` is not the supported deployment path. `./gradlew :app:installDebug` invokes the Android Gradle Plugin's bundle-to-APK installation path and includes device-targeted features for the connected device.
 
-**Quadrant mapping** (CalibrationEngine.kt):
-```kotlin
-pitchMid = average of all 4 corner pitches
-yawMid   = average of all 4 corner yaws
+## Local data and permissions
 
-isUp   = pitch < pitchMid  →  quadrant 1 (TL) or 2 (TR)
-isLeft = yaw   < yawMid    →  quadrant 1 (TL) or 3 (BL)
-```
+The manifest declares camera permission and a required front camera. It does not declare Internet or storage permission. The application stores only calibration midpoint values through its own code. Camera frames and eye crops are passed through memory and are not written to files by the application.
 
-**Persistence**: `pitchMid` and `yawMid` are stored in `SharedPreferences ("gazeboard_calib")`. If calibration data exists at launch, the app skips to `QuickPhrases`. The "↺ Recalibrate" button resets and re-runs calibration.
+Android text-to-speech runs through the selected system service. Whether that external service has an offline voice installed is outside this application's control.
 
-**Known limitation**: The calibration dots are placed at the screen corners (`margin=80px`), which require more extreme gaze angles than looking at the quadrant centers during actual use. Combined with the left eye's asymmetric abduction/adduction range, left-quadrant detection tends to have a narrower activation margin. See `docs/GAZE_ISSUES.md` for detailed analysis.
+## Verification boundary
 
----
-
-## Dwell Selection System
-
-```kotlin
-// GazeBoardViewModel.kt
-private const val DWELL_MS      = 1000L   // selection threshold
-private const val CALIB_DWELL_MS = 1500L  // calibration dwell per corner
-private const val COOLDOWN_MS   = 500L    // post-selection lockout
-```
-
-Logic:
-1. Each frame, `onGazeUpdate()` calls `handleDwellGaze(quadrant)`
-2. If quadrant changes → reset `dwellStartMs`, show progress = 0
-3. If same quadrant → compute `elapsed / DWELL_MS`, update dwell ring
-4. If `elapsed >= DWELL_MS` → `selectQuadrant()` → state machine transition
-5. Post-selection: 500ms cooldown ignores all gaze input
-
-**Note**: when `quadrant == 0` (no face detected), the visual progress resets to 0 but the timer (`dwellStartMs`) is NOT reset. This is intentional blink tolerance — brief face loss doesn't restart the dwell. See `docs/GAZE_ISSUES.md` for timing analysis.
-
----
-
-## Debug Mode
-
-A "□ Debug" tap button appears in the bottom-left of every screen. Tapping it toggles `GazeBoardViewModel.debugMode` and shows `DebugOverlay` with:
-- FPS (10-frame rolling average)
-- NPU inference latency (ms)
-- Face detect latency (ms)  
-- Total pipeline latency
-- Raw pitch/yaw (smoothed)
-- Active quadrant
-- Face detected indicator
-- Accelerator name
-- Current AppState
-
----
-
-## NPU Verification (for judges)
-
-1. `EyeGazeModel.kt` uses `CompiledModel.create()` with `Accelerator.NPU` — satisfies eligibility gate
-2. `NpuBadge` shows "LiteRT: NPU · Xms" when running on NPU
-3. Logcat: `"EyeGaze model loaded on NPU via CompiledModel API"` on launch
-4. Logcat: `"NPU JIT warm-up complete: Xms"` on first launch
-5. If NPU fails: `ModelErrorScreen` shown (no silent CPU fallback)
+Static inspection confirms that the classes above are wired into one path and that the debug variant compiles. The repository does not contain automated tests, target-device logs, screen recordings, benchmark output, accuracy samples, or hardware traces. Do not infer runtime performance or suitability for assistive use from this architecture alone.
