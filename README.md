@@ -2,7 +2,7 @@
 
 GazeBoard is an Android research prototype that turns four gaze directions into spoken quick phrases or word selections without sending camera frames to an application server.
 
-> **Current status:** The camera-to-speech path, calibration state machine, word predictor, and Qualcomm SM8750 NPU packaging are implemented. A debug build assembles successfully. Device execution, gaze accuracy, latency, and sustained frame rate have not been re-verified on target hardware, and the repository currently has no automated test cases. See [Validation status](#validation-status) and [Current limitations](#current-limitations).
+> **Current status:** The camera-to-speech path, calibration state machine, word predictor, and Qualcomm SM8750 NPU packaging are implemented. A debug build assembles successfully. Device execution and gaze accuracy have not been re-verified on target hardware. Latency and sustained frame rate were observed during the hackathon build and have not been re-verified since. The repository currently has no automated test cases. See [Validation status](#validation-status) and [Current limitations](#current-limitations).
 
 ```mermaid
 flowchart LR
@@ -114,6 +114,10 @@ The following commands were run from a clean `main` checkout on August 13, 2026,
 | `./gradlew :app:testDebugUnitTest` | Completed with `NO-SOURCE`; no unit tests exist. |
 | `./gradlew :app:lintDebug` | Failed with 1 error, 53 warnings, and 1 hint. The error requests an additional generic camera feature declaration for ChromeOS compatibility. |
 | `adb devices -l` | ADB was available, but no Android device was connected. Installation and end-to-end behavior were not exercised. |
+
+### Observed on device during the hackathon
+
+During the Qualcomm x Google LiteRT On-Device & Edge AI Hackathon (April-May 2026), a project team member ran the app on a Samsung Galaxy S25 Ultra (Snapdragon SM8750). The values shown on the in-app debug overlay were read off the screen during that single session; they were not logged to a file, not averaged over a fixed number of frames, and have not been re-verified since the event. This is a first-hand observation from the event, not a benchmark, and no specific overlay readings were recorded in a form that could be reproduced here.
 
 The repository contains no project-produced accuracy, user-study, power, frame-rate, or inference-latency dataset. Upstream model measurements use different controlled environments and should not be treated as GazeBoard results.
 
